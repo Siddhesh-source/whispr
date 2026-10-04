@@ -1,5 +1,6 @@
 package dev.whispr.data.db
 
+import androidx.room.AutoMigration
 import androidx.room.Dao
 import androidx.room.Database
 import androidx.room.Entity
@@ -41,9 +42,25 @@ interface AccountDao {
  * The on-device database, encrypted with SQLCipher. Its passphrase is a
  * random 256-bit key wrapped by a Keystore key (see [DatabaseKey]).
  */
-@Database(entities = [AccountEntity::class], version = 1, exportSchema = true)
+@Database(
+    entities = [
+        AccountEntity::class,
+        ContactEntity::class,
+        MessageEntity::class,
+        OutboxEntity::class,
+        SettingEntity::class,
+    ],
+    version = 2,
+    exportSchema = true,
+    autoMigrations = [AutoMigration(from = 1, to = 2)],
+)
 abstract class WhisprDatabase : RoomDatabase() {
     abstract fun accountDao(): AccountDao
+    abstract fun contactDao(): ContactDao
+    abstract fun messageDao(): MessageDao
+    abstract fun outboxDao(): OutboxDao
+    abstract fun settingDao(): SettingDao
+    abstract fun messagingTransactions(): MessagingTransactions
 
     companion object {
         const val NAME = "whispr.db"

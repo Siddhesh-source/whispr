@@ -21,17 +21,27 @@ import dev.whispr.data.db.DatabaseKey
 import dev.whispr.data.db.LazyKeyOpenHelperFactory
 import dev.whispr.data.db.WhisprDatabase
 import dev.whispr.data.identity.LibsignalIdentityRepository
+import dev.whispr.data.messaging.MessagingEngine
+import dev.whispr.data.messaging.RoomContactsRepository
+import dev.whispr.data.messaging.RoomMessagingRepository
+import dev.whispr.data.messaging.RoomSettingsRepository
 import dev.whispr.data.network.AuthApi
 import dev.whispr.data.network.ServerConfig
+import dev.whispr.data.network.WhisprApi
 import dev.whispr.domain.repository.AccountRepository
 import dev.whispr.domain.repository.AuthRepository
 import dev.whispr.domain.repository.ConnectivityRepository
+import dev.whispr.domain.repository.ContactsRepository
 import dev.whispr.domain.repository.IdentityRepository
+import dev.whispr.domain.repository.MessagingRepository
+import dev.whispr.domain.repository.SettingsRepository
 import java.io.File
 import java.util.concurrent.TimeUnit
 import javax.inject.Qualifier
 import javax.inject.Singleton
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import okhttp3.OkHttpClient
 
 @Qualifier
@@ -101,6 +111,42 @@ object DataModule {
     @Provides @Singleton
     fun connectivity(@ApplicationContext context: Context): ConnectivityRepository =
         AndroidConnectivityRepository(context.getSystemService(ConnectivityManager::class.java))
+
+    @Provides @Singleton
+    fun whisprApi(client: OkHttpClient, config: ServerConfig, tokens: TokenSource) = WhisprApi(client, config, tokens)
+
+    @Provides @Singleton
+    fun messagingEngine(
+        db: WhisprDatabase,
+        client: OkHttpClient,
+        api: WhisprApi,
+        tokens: TokenSource,
+        accounts: AccountRepository,
+        connectivity: ConnectivityRepository,
+    ) = MessagingEngine(
+        db,
+        client,
+        api,
+        tokens,
+        accounts,
+        connectivity,
+        CoroutineScope(SupervisorJob() + Dispatchers.IO),
+    )
+
+    @Provides @Singleton
+    fun settingsRepository(db: WhisprDatabase): SettingsRepository = RoomSettingsRepository(db.settingDao())
+
+    @Provides @Singleton
+    fun messagingRepository(
+        db: WhisprDatabase,
+        engine: MessagingEngine,
+        accounts: AccountRepository,
+        settings: SettingsRepository,
+    ): MessagingRepository = RoomMessagingRepository(db, engine, accounts, settings)
+
+    @Provides @Singleton
+    fun contactsRepository(db: WhisprDatabase, api: WhisprApi, accounts: AccountRepository): ContactsRepository =
+        RoomContactsRepository(db.contactDao(), api, accounts)
 
     private fun secretsDir(context: Context) = File(context.noBackupFilesDir, "secrets")
 

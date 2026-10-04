@@ -25,6 +25,9 @@ import kotlinx.coroutines.sync.withLock
 interface TokenSource {
     /** A token valid for at least a short margin, re-authenticating if needed; null if unavailable. */
     suspend fun bearerToken(): String?
+
+    /** Drops the current token after the server rejected it, forcing a fresh sign-in. */
+    fun invalidate()
 }
 
 /**
@@ -77,6 +80,10 @@ class SessionAuthRepository(
                 currentToken()
             }
         }
+    }
+
+    override fun invalidate() {
+        token = null
     }
 
     private fun currentToken(): String? =

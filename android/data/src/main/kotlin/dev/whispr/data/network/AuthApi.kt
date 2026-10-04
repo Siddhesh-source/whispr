@@ -1,22 +1,15 @@
 package dev.whispr.data.network
 
-import java.io.IOException
 import java.util.Base64
-import kotlin.coroutines.resume
-import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
-import okhttp3.Call
-import okhttp3.Callback
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
-import okhttp3.Response
 
 data class ServerConfig(val baseUrl: String)
 
@@ -56,23 +49,8 @@ class AuthApi(private val client: OkHttpClient, config: ServerConfig, private va
             .build(),
     )
 
-    private suspend inline fun <reified Res> execute(request: Request): ApiResult<Res> {
-        val response = try {
-            client.newCall(request).await()
-        } catch (_: IOException) {
-            return ApiResult.NetworkError
-        }
-        return response.use {
-            if (!it.isSuccessful) return ApiResult.HttpError(it.code)
-            try {
-                ApiResult.Success(json.decodeFromString<Res>(it.body.string()))
-            } catch (_: SerializationException) {
-                ApiResult.HttpError(it.code)
-            } catch (_: IOException) {
-                ApiResult.NetworkError
-            }
-        }
-    }
+    private suspend inline fun <reified Res> execute(request: Request): ApiResult<Res> =
+        client.executeJson(request, json)
 
     companion object {
         val DefaultJson = Json { ignoreUnknownKeys = true }
@@ -80,20 +58,6 @@ class AuthApi(private val client: OkHttpClient, config: ServerConfig, private va
         private fun b64(bytes: ByteArray) = Base64.getEncoder().encodeToString(bytes)
         fun unb64(s: String): ByteArray = Base64.getDecoder().decode(s)
     }
-}
-
-private suspend fun Call.await(): Response = suspendCancellableCoroutine { cont ->
-    cont.invokeOnCancellation { cancel() }
-    enqueue(
-        object : Callback {
-            override fun onResponse(call: Call, response: Response) =
-                cont.resume(response) { _, _, _ -> response.close() }
-
-            override fun onFailure(call: Call, e: IOException) {
-                if (cont.isActive) cont.resumeWith(Result.failure(e))
-            }
-        },
-    )
 }
 
 @Serializable
