@@ -26,3 +26,9 @@ server/coverage.out
 
 # Env
 .env
+
+# Firebase project values and server key (never commit)
+android/firebase.properties
+**/google-services.json
+*service-account*.json
+secrets/
