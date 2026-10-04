@@ -22,6 +22,15 @@ sealed interface Payload {
     @SerialName("read")
     data class Read(val ids: List<String>) : Payload
 
+    /**
+     * "I added you": sent after scanning someone's code or finding their
+     * username. Carries the sender's identity key so the recipient can pin it
+     * and cross-check it against the server.
+     */
+    @Serializable
+    @SerialName("contact_request")
+    data class ContactRequest(val name: String, val key: String) : Payload
+
     /** Sent as a transient frame (never stored). Only if typing indicators are enabled. */
     @Serializable
     @SerialName("typing")

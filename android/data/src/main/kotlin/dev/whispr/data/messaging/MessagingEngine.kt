@@ -47,6 +47,7 @@ import okhttp3.Request
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
+import org.signal.libsignal.protocol.IdentityKey
 
 /** A newly received message, for local notifications. */
 data class IncomingMessage(val conversationId: ConversationId, val senderName: String, val text: String)
@@ -258,6 +259,7 @@ class MessagingEngine(
                     typingUntil.update { it - conversation.value }
                 }
                 is Payload.Read -> db.messageDao().markReadByPeer(payload.ids, sender)
+                is Payload.ContactRequest -> handleContactRequest(sender, payload)
                 Payload.Typing, null -> Unit // unknown or misplaced: acknowledge and drop
             }
         }
@@ -270,15 +272,51 @@ class MessagingEngine(
         typingUntil.update { it + (conversation.value to System.currentTimeMillis() + timings.typingVisibleMs) }
     }
 
-    /** Messages from someone not yet added still arrive; the contact is created from the server profile. */
+    /**
+     * Someone added us. A new requester is stored as a request with the key
+     * they sent, cross-checked against the server; any difference, or a
+     * difference from a key we already pinned, is flagged, never adopted.
+     */
+    private suspend fun handleContactRequest(sender: String, request: Payload.ContactRequest) {
+        val key = runCatching { Base64.getDecoder().decode(request.key) }.getOrNull()
+            ?.takeIf { runCatching { IdentityKey(it) }.isSuccess } ?: return
+        val existing = db.contactDao().get(sender)
+        if (existing != null) {
+            when {
+                existing.identityKey.isEmpty() -> db.contactDao().upsert(existing.copy(identityKey = key))
+                !existing.identityKey.contentEquals(key) -> db.contactDao().flagKeyChange(sender, key)
+            }
+            return
+        }
+        val server = (api.lookupUser(sender) as? ApiResult.Success)?.body
+        db.contactDao().upsert(
+            ContactEntity(
+                userId = sender,
+                // Prefer the server-validated name over the one in the payload.
+                displayName = server?.displayName ?: request.name.take(MAX_NAME).ifBlank { UNKNOWN_CONTACT },
+                identityKey = key,
+                addedAt = System.currentTimeMillis(),
+                isRequest = true,
+            ),
+        )
+        val serverKey = server?.identityKey?.let { runCatching { Base64.getDecoder().decode(it) }.getOrNull() }
+        if (serverKey != null && !serverKey.contentEquals(key)) db.contactDao().flagKeyChange(sender, serverKey)
+    }
+
+    /**
+     * Messages from someone not yet added still arrive, as a message request.
+     * An existing contact is never modified here; its pinned key stays put.
+     */
     private suspend fun ensureContact(userId: String): ContactEntity {
-        db.contactDao().get(userId)?.takeIf { it.identityKey.isNotEmpty() }?.let { return it }
+        val existing = db.contactDao().get(userId)
+        if (existing != null && existing.identityKey.isNotEmpty()) return existing
         val looked = (api.lookupUser(userId) as? ApiResult.Success)?.body
-        val contact = ContactEntity(
-            userId = userId,
-            displayName = looked?.displayName ?: db.contactDao().get(userId)?.displayName ?: UNKNOWN_CONTACT,
+        val contact = (
+            existing
+                ?: ContactEntity(userId, UNKNOWN_CONTACT, ByteArray(0), System.currentTimeMillis(), isRequest = true)
+            ).copy(
+            displayName = looked?.displayName ?: existing?.displayName ?: UNKNOWN_CONTACT,
             identityKey = looked?.identityKey?.let { Base64.getDecoder().decode(it) } ?: ByteArray(0),
-            addedAt = System.currentTimeMillis(),
         )
         db.contactDao().upsert(contact)
         return contact
@@ -345,6 +383,7 @@ class MessagingEngine(
 
     companion object {
         const val UNKNOWN_CONTACT = "Unknown contact"
+        private const val MAX_NAME = 64
         private const val HTTP_UNAUTHORIZED = 401
         private const val MAX_SHIFT = 20
 

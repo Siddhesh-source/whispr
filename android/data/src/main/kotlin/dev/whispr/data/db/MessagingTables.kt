@@ -16,9 +16,15 @@ import kotlinx.coroutines.flow.Flow
 data class ContactEntity(
     @PrimaryKey val userId: String,
     val displayName: String,
-    /** Empty until looked up (e.g. a message from someone not yet added). */
+    /** The pinned identity key. Empty only if it could not be fetched yet. */
     val identityKey: ByteArray,
     val addedAt: Long,
+    /** TrustState name: Unverified, Verified or KeyChanged. */
+    @ColumnInfo(defaultValue = "Unverified") val trust: String = "Unverified",
+    /** True while this is an incoming contact or message request we have not accepted. */
+    @ColumnInfo(defaultValue = "0") val isRequest: Boolean = false,
+    /** The different key the server reported, held until the user acknowledges it. */
+    val pendingKey: ByteArray? = null,
 )
 
 /**
@@ -66,10 +72,11 @@ data class OutboxEntity(
 data class SettingEntity(@PrimaryKey val key: String, val value: String)
 
 data class ConversationRow(
-    val conversationId: String,
     val peerId: String,
     val displayName: String,
     val identityKey: ByteArray,
+    val trust: String,
+    val isRequest: Boolean,
     val messageId: String?,
     val outgoing: Boolean?,
     val body: String?,
@@ -86,25 +93,57 @@ interface ContactDao {
     @Query("SELECT * FROM contacts WHERE userId = :userId")
     suspend fun get(userId: String): ContactEntity?
 
+    @Query("SELECT * FROM contacts WHERE userId = :userId")
+    fun observe(userId: String): Flow<ContactEntity?>
+
     @Upsert
     suspend fun upsert(contact: ContactEntity)
+
+    @Query("UPDATE contacts SET isRequest = 0 WHERE userId = :userId")
+    suspend fun accept(userId: String)
+
+    @Query("UPDATE contacts SET trust = :trust WHERE userId = :userId")
+    suspend fun setTrust(userId: String, trust: String)
+
+    /** A different key was reported: keep the pinned one, hold the new one, flag it. */
+    @Query("UPDATE contacts SET trust = 'KeyChanged', pendingKey = :newKey WHERE userId = :userId")
+    suspend fun flagKeyChange(userId: String, newKey: ByteArray)
+
+    /** The user acknowledged a key change: pin the new key, back to Unverified. */
+    @Query(
+        """UPDATE contacts SET identityKey = pendingKey, pendingKey = NULL, trust = 'Unverified'
+           WHERE userId = :userId AND pendingKey IS NOT NULL""",
+    )
+    suspend fun acceptPendingKey(userId: String)
+
+    @Query("UPDATE contacts SET displayName = :name WHERE userId = :userId")
+    suspend fun setName(userId: String, name: String)
+
+    @Query("DELETE FROM contacts WHERE userId = :userId")
+    suspend fun delete(userId: String)
 }
 
 @Dao
 interface MessageDao {
-    /** One row per contact that has messages, newest activity first. */
+    /**
+     * One row per contact (with or without messages), newest activity first.
+     * Contacts without messages sort by when they were added.
+     */
     @Query(
         """
-        SELECT m.conversationId, c.userId AS peerId, c.displayName, c.identityKey,
+        SELECT c.userId AS peerId, c.displayName, c.identityKey, c.trust, c.isRequest,
                m.messageId, m.outgoing, m.body, m.timestamp, m.status,
                (SELECT COUNT(*) FROM messages u
-                 WHERE u.conversationId = m.conversationId AND u.outgoing = 0 AND u.readByMe = 0) AS unread
-        FROM messages m JOIN contacts c ON c.userId = m.peerId
-        WHERE m.localOrder = (SELECT MAX(localOrder) FROM messages x WHERE x.conversationId = m.conversationId)
-        ORDER BY m.localOrder DESC
+                 WHERE u.peerId = c.userId AND u.outgoing = 0 AND u.readByMe = 0) AS unread
+        FROM contacts c
+        LEFT JOIN messages m ON m.localOrder = (SELECT MAX(localOrder) FROM messages x WHERE x.peerId = c.userId)
+        ORDER BY COALESCE(m.timestamp, c.addedAt) DESC
         """,
     )
     fun observeConversations(): Flow<List<ConversationRow>>
+
+    @Query("DELETE FROM messages WHERE peerId = :peerId")
+    suspend fun deleteFrom(peerId: String)
 
     @Query("SELECT * FROM messages WHERE conversationId = :conversationId ORDER BY localOrder")
     fun observe(conversationId: String): Flow<List<MessageEntity>>

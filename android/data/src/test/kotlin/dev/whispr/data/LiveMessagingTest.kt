@@ -3,13 +3,13 @@ package dev.whispr.data
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import dev.whispr.data.auth.SessionAuthRepository
+import dev.whispr.data.contacts.RoomContactsRepository
 import dev.whispr.data.crypto.SecretFileStore
 import dev.whispr.data.db.AccountEntity
 import dev.whispr.data.db.WhisprDatabase
 import dev.whispr.data.identity.LibsignalIdentityRepository
 import dev.whispr.data.messaging.EngineTimings
 import dev.whispr.data.messaging.MessagingEngine
-import dev.whispr.data.messaging.RoomContactsRepository
 import dev.whispr.data.messaging.RoomMessagingRepository
 import dev.whispr.data.messaging.RoomSettingsRepository
 import dev.whispr.data.network.AuthApi
@@ -21,7 +21,9 @@ import dev.whispr.domain.model.AuthResult
 import dev.whispr.domain.model.AvatarSource
 import dev.whispr.domain.model.ConversationId
 import dev.whispr.domain.model.MessageStatus
+import dev.whispr.domain.model.TrustState
 import dev.whispr.domain.model.UserId
+import dev.whispr.domain.model.VerifyResult
 import dev.whispr.domain.repository.AccountRepository
 import dev.whispr.domain.repository.ConnectivityRepository
 import java.io.File
@@ -73,7 +75,7 @@ class LiveMessagingTest {
             LibsignalIdentityRepository(SecretFileStore(secrets, SoftwareKeyWrapper()), Dispatchers.IO)
         val auth = SessionAuthRepository(AuthApi(client, ServerConfig(url)), identity, accounts)
         private val api = WhisprApi(client, ServerConfig(url), auth)
-        val contacts = RoomContactsRepository(db.contactDao(), api, accounts)
+        val contacts = RoomContactsRepository(db, api, accounts, identity, allowInsecureLoopback = true)
         private var scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         private var engine = newEngine()
         var repo = repoFor(engine)
@@ -168,6 +170,59 @@ class LiveMessagingTest {
             val bobTexts = bob.repo.observeMessages(conversation).first().map { it.text }
             assertEquals("no duplicates", bobTexts.distinct(), bobTexts)
             assertEquals(texts + listOf("live reply", "live again", "after restart"), bobTexts)
+        } finally {
+            alice.close()
+            bob.close()
+        }
+    }
+
+    @Test
+    fun scanAddsBothSidesAndSafetyNumbersVerify() = runBlocking {
+        val url = System.getenv("WHISPR_SERVER_URL")
+        assumeTrue("WHISPR_SERVER_URL not set", !url.isNullOrBlank())
+        val alice = Device("Alice", url!!)
+        val bob = Device("Bob", url)
+        try {
+            alice.register()
+            bob.register()
+            alice.goOnline()
+            bob.goOnline()
+
+            // Bob scans Alice's code: Alice is pinned on Bob's side immediately.
+            val added = bob.contacts.addFromCode(alice.contacts.myContactCode())
+            check(added is AddContactResult.Added) { "scan failed: $added" }
+
+            // Alice receives a contact request carrying Bob's key, and accepts it.
+            eventually("alice got request") { alice.contacts.contact(bob.id)?.isRequest == true }
+            alice.contacts.acceptRequest(bob.id)
+            assertEquals(TrustState.Unverified, alice.contacts.contact(bob.id)!!.trust)
+
+            // Both can chat without scanning again.
+            val conversation = ConversationId.direct(alice.id, bob.id)
+            check(alice.repo.sendText(bob.id, "hi from alice"))
+            check(bob.repo.sendText(alice.id, "hi from bob"))
+            eventually("bob got alice's") {
+                bob.repo.observeMessages(conversation).first().any {
+                    it.text ==
+                        "hi from alice"
+                }
+            }
+            eventually("alice got bob's") {
+                alice.repo.observeMessages(conversation).first().any {
+                    it.text ==
+                        "hi from bob"
+                }
+            }
+
+            // In person: both see the same 60 digits and each scans the other's code.
+            val aliceSn = alice.contacts.safetyNumber(bob.id)!!
+            val bobSn = bob.contacts.safetyNumber(alice.id)!!
+            assertEquals(60, aliceSn.digits.length)
+            assertEquals(aliceSn.digits, bobSn.digits)
+            assertEquals(VerifyResult.Match, alice.contacts.verifyScanned(bob.id, bobSn.qrCode))
+            assertEquals(VerifyResult.Match, bob.contacts.verifyScanned(alice.id, aliceSn.qrCode))
+            assertEquals(TrustState.Verified, alice.contacts.contact(bob.id)!!.trust)
+            assertEquals(TrustState.Verified, bob.contacts.contact(alice.id)!!.trust)
         } finally {
             alice.close()
             bob.close()

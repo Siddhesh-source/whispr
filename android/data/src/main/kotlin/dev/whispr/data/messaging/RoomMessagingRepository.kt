@@ -11,6 +11,7 @@ import dev.whispr.domain.model.ConversationId
 import dev.whispr.domain.model.ConversationSummary
 import dev.whispr.domain.model.Message
 import dev.whispr.domain.model.MessageStatus
+import dev.whispr.domain.model.TrustState
 import dev.whispr.domain.model.UserId
 import dev.whispr.domain.repository.AccountRepository
 import dev.whispr.domain.repository.MessagingRepository
@@ -18,6 +19,7 @@ import dev.whispr.domain.repository.SettingsRepository
 import java.time.Instant
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicLong
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
@@ -40,8 +42,13 @@ class RoomMessagingRepository(
     private val lastTypingSent = AtomicLong(0)
 
     override fun observeConversations(): Flow<List<ConversationSummary>> =
-        combine(db.messageDao().observeConversations(), settings.observePrivacy()) { rows, privacy ->
-            rows.map { it.toSummary(privacy.readReceipts) }
+        combine(db.messageDao().observeConversations(), settings.observePrivacy(), accounts.observeAccount()) {
+                rows,
+                privacy,
+                account,
+            ->
+            val me = account?.userId ?: return@combine emptyList()
+            rows.map { it.toSummary(ConversationId.direct(me, UserId(it.peerId)), privacy.readReceipts) }
         }
 
     override fun observeMessages(conversation: ConversationId): Flow<List<Message>> =
@@ -49,7 +56,9 @@ class RoomMessagingRepository(
             rows.map { it.toDomain(privacy.readReceipts) }
         }
 
-    override suspend fun sendText(peer: UserId, text: String) {
+    override suspend fun sendText(peer: UserId, text: String): Boolean {
+        // A changed key the user has not acknowledged blocks sending.
+        if (db.contactDao().get(peer.value)?.trust == TrustState.KeyChanged.name) return false
         val conversation = conversationWith(peer)
         val id = UUID.randomUUID().toString()
         val now = clock()
@@ -71,6 +80,7 @@ class RoomMessagingRepository(
                 clientTs = now,
             ),
         )
+        return true
     }
 
     override suspend fun retry(messageId: String) {
@@ -114,6 +124,7 @@ class RoomMessagingRepository(
         engine.sendTransient(peer, conversationWith(peer), Payload.Typing)
     }
 
+    @OptIn(ExperimentalCoroutinesApi::class)
     override fun observePeerTyping(conversation: ConversationId): Flow<Boolean> =
         combine(engine.typing, settings.observePrivacy()) { map, privacy ->
             if (privacy.typingIndicators) map[conversation.value] ?: 0L else 0L
@@ -140,13 +151,13 @@ class RoomMessagingRepository(
         status = status?.let { statusFor(it, showRead) },
     )
 
-    private fun ConversationRow.toSummary(showRead: Boolean) = ConversationSummary(
-        id = ConversationId(conversationId),
-        peer = Contact(UserId(peerId), displayName, identityKey),
+    private fun ConversationRow.toSummary(conversationId: ConversationId, showRead: Boolean) = ConversationSummary(
+        id = conversationId,
+        peer = Contact(UserId(peerId), displayName, identityKey, TrustState.valueOf(trust), isRequest),
         lastMessage = messageId?.let {
             Message(
                 id = it,
-                conversationId = ConversationId(conversationId),
+                conversationId = conversationId,
                 outgoing = outgoing == true,
                 text = body.orEmpty(),
                 timestamp = Instant.ofEpochMilli(timestamp ?: 0),
@@ -167,4 +178,5 @@ class RoomMessagingRepository(
     }
 }
 
-internal fun ContactEntity.toDomain() = Contact(UserId(userId), displayName, identityKey)
+internal fun ContactEntity.toDomain() =
+    Contact(UserId(userId), displayName, identityKey, TrustState.valueOf(trust), isRequest)

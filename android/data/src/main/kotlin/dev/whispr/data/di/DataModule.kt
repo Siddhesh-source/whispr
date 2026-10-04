@@ -14,6 +14,7 @@ import dev.whispr.data.account.asImporter
 import dev.whispr.data.auth.SessionAuthRepository
 import dev.whispr.data.auth.TokenSource
 import dev.whispr.data.connectivity.AndroidConnectivityRepository
+import dev.whispr.data.contacts.RoomContactsRepository
 import dev.whispr.data.crypto.AndroidKeystoreKeyWrapper
 import dev.whispr.data.crypto.SecretFileStore
 import dev.whispr.data.db.AccountDao
@@ -22,18 +23,19 @@ import dev.whispr.data.db.LazyKeyOpenHelperFactory
 import dev.whispr.data.db.WhisprDatabase
 import dev.whispr.data.identity.LibsignalIdentityRepository
 import dev.whispr.data.messaging.MessagingEngine
-import dev.whispr.data.messaging.RoomContactsRepository
 import dev.whispr.data.messaging.RoomMessagingRepository
 import dev.whispr.data.messaging.RoomSettingsRepository
 import dev.whispr.data.network.AuthApi
 import dev.whispr.data.network.ServerConfig
 import dev.whispr.data.network.WhisprApi
+import dev.whispr.data.profile.RoomProfileRepository
 import dev.whispr.domain.repository.AccountRepository
 import dev.whispr.domain.repository.AuthRepository
 import dev.whispr.domain.repository.ConnectivityRepository
 import dev.whispr.domain.repository.ContactsRepository
 import dev.whispr.domain.repository.IdentityRepository
 import dev.whispr.domain.repository.MessagingRepository
+import dev.whispr.domain.repository.ProfileRepository
 import dev.whispr.domain.repository.SettingsRepository
 import java.io.File
 import java.util.concurrent.TimeUnit
@@ -51,6 +53,11 @@ annotation class IdentityStore
 @Qualifier
 @Retention(AnnotationRetention.BINARY)
 annotation class DatabaseKeyStore
+
+/** True in debug builds: contact codes may name a loopback server over plain HTTP. Provided by the app. */
+@Qualifier
+@Retention(AnnotationRetention.BINARY)
+annotation class InsecureLoopbackAllowed
 
 /** The app module provides [ServerConfig]; everything else is wired here. */
 @Module
@@ -145,8 +152,22 @@ object DataModule {
     ): MessagingRepository = RoomMessagingRepository(db, engine, accounts, settings)
 
     @Provides @Singleton
-    fun contactsRepository(db: WhisprDatabase, api: WhisprApi, accounts: AccountRepository): ContactsRepository =
-        RoomContactsRepository(db.contactDao(), api, accounts)
+    fun contactsRepository(
+        db: WhisprDatabase,
+        api: WhisprApi,
+        accounts: AccountRepository,
+        identity: IdentityRepository,
+        @InsecureLoopbackAllowed allowInsecureLoopback: Boolean,
+    ): ContactsRepository = RoomContactsRepository(db, api, accounts, identity, allowInsecureLoopback)
+
+    @Provides @Singleton
+    fun profileRepository(@ApplicationContext context: Context, db: WhisprDatabase, api: WhisprApi): ProfileRepository =
+        RoomProfileRepository(
+            db.accountDao(),
+            api,
+            AvatarStore(context.contentResolver, File(context.noBackupFilesDir, "avatar")).asImporter(),
+            Dispatchers.IO,
+        )
 
     private fun secretsDir(context: Context) = File(context.noBackupFilesDir, "secrets")
 

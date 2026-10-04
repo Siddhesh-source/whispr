@@ -17,6 +17,8 @@ data class AccountEntity(
     val userId: String?,
     val displayName: String,
     val avatarPath: String?,
+    /** Our username (e.g. "sam.42"), if claimed. */
+    val username: String? = null,
 ) {
     companion object {
         const val SINGLETON_ID = 0
@@ -36,6 +38,15 @@ interface AccountDao {
 
     @Query("UPDATE account SET userId = :userId WHERE id = 0")
     suspend fun setUserId(userId: String): Int
+
+    @Query("UPDATE account SET username = :username WHERE id = 0")
+    suspend fun setUsername(username: String?)
+
+    @Query("UPDATE account SET displayName = :name WHERE id = 0")
+    suspend fun setDisplayName(name: String)
+
+    @Query("UPDATE account SET avatarPath = :path WHERE id = 0")
+    suspend fun setAvatarPath(path: String?)
 }
 
 /**
@@ -50,9 +61,9 @@ interface AccountDao {
         OutboxEntity::class,
         SettingEntity::class,
     ],
-    version = 2,
+    version = 3,
     exportSchema = true,
-    autoMigrations = [AutoMigration(from = 1, to = 2)],
+    autoMigrations = [AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3)],
 )
 abstract class WhisprDatabase : RoomDatabase() {
     abstract fun accountDao(): AccountDao

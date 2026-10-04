@@ -32,6 +32,8 @@ class FakeGateway : Dispatcher() {
 
     @Volatile var rejectAuth = false
     val users = mutableMapOf<String, String>() // userId -> display name
+    val keys = mutableMapOf<String, ByteArray>() // userId -> identity key the server reports
+    val usernames = mutableMapOf<String, String>() // username -> userId
 
     private val accepted = mutableSetOf<String>()
     private var nextSeq = 1L
@@ -40,20 +42,24 @@ class FakeGateway : Dispatcher() {
 
     override fun dispatch(request: RecordedRequest): MockResponse {
         val path = request.url.encodedPath
-        if (path.startsWith("/v1/users/")) {
-            val id = path.removePrefix("/v1/users/")
-            val name = users[id] ?: return MockResponse.Builder().code(404).body("{}").build()
-            val key = Base64.getEncoder().encodeToString(ByteArray(33) { 5 })
-            return MockResponse.Builder().code(
-                200,
-            ).body("""{"user_id":"$id","display_name":"$name","identity_key":"$key"}""").build()
+        return when {
+            path.startsWith("/v1/usernames/") -> usernames[path.removePrefix("/v1/usernames/")]?.let(::userResponse)
+                ?: notFound()
+            path.startsWith("/v1/users/") -> userResponse(path.removePrefix("/v1/users/"))
+            path == "/v1/ws" && rejectAuth -> MockResponse.Builder().code(401).body("{}").build()
+            path == "/v1/ws" -> MockResponse.Builder().webSocketUpgrade(listener).build()
+            else -> notFound()
         }
-        if (path == "/v1/ws") {
-            if (rejectAuth) return MockResponse.Builder().code(401).body("{}").build()
-            return MockResponse.Builder().webSocketUpgrade(listener).build()
-        }
-        return MockResponse.Builder().code(404).build()
     }
+
+    private fun userResponse(id: String): MockResponse {
+        val name = users[id] ?: return notFound()
+        val key = Base64.getEncoder().encodeToString(keys[id] ?: ByteArray(33) { 5 })
+        val body = """{"user_id":"$id","display_name":"$name","identity_key":"$key"}"""
+        return MockResponse.Builder().code(200).body(body).build()
+    }
+
+    private fun notFound() = MockResponse.Builder().code(404).body("{}").build()
 
     private val listener = object : WebSocketListener() {
         override fun onOpen(webSocket: WebSocket, response: Response) {

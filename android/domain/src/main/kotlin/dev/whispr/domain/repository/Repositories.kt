@@ -9,9 +9,13 @@ import dev.whispr.domain.model.Contact
 import dev.whispr.domain.model.ConversationId
 import dev.whispr.domain.model.ConversationSummary
 import dev.whispr.domain.model.Message
+import dev.whispr.domain.model.MyProfile
 import dev.whispr.domain.model.PrivacySettings
+import dev.whispr.domain.model.ProfileResult
+import dev.whispr.domain.model.SafetyNumber
 import dev.whispr.domain.model.SessionState
 import dev.whispr.domain.model.UserId
+import dev.whispr.domain.model.VerifyResult
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 
@@ -57,10 +61,52 @@ interface ConnectivityRepository {
 interface ContactsRepository {
     fun observeContacts(): Flow<List<Contact>>
 
+    fun observeContact(userId: UserId): Flow<Contact?>
+
     suspend fun contact(userId: UserId): Contact?
 
-    /** Looks the user up on the server and stores them locally. */
+    /** Our own contact code, to show as a QR. */
+    suspend fun myContactCode(): String
+
+    /** Parses a scanned code (hostile input), pins the key, and sends them a contact request. */
+    suspend fun addFromCode(code: String): AddContactResult
+
+    /** Looks up an exact username (e.g. "sam.42"); pins the server-reported key. */
+    suspend fun addByUsername(username: String): AddContactResult
+
+    /** Development and test helper: add by raw account ID. Not exposed in the UI. */
     suspend fun addById(rawUserId: String): AddContactResult
+
+    suspend fun acceptRequest(userId: UserId)
+
+    /** Removes the requester and anything they sent. */
+    suspend fun declineRequest(userId: UserId)
+
+    /** Re-reads the contact's key from the server; a difference marks the contact KeyChanged. */
+    suspend fun refreshKey(userId: UserId)
+
+    /** User saw the warning: pin the new key, back to Unverified. */
+    suspend fun acknowledgeKeyChange(userId: UserId)
+
+    suspend fun safetyNumber(userId: UserId): SafetyNumber?
+
+    /** Compares a scanned safety-number code; marks Verified on a match. */
+    suspend fun verifyScanned(userId: UserId, scanned: String): VerifyResult
+
+    suspend fun setVerified(userId: UserId, verified: Boolean)
+}
+
+interface ProfileRepository {
+    fun observeProfile(): Flow<MyProfile?>
+
+    suspend fun setDisplayName(name: String): ProfileResult
+
+    suspend fun setAvatar(avatar: AvatarSource?)
+
+    /** Claims nickname plus a server-assigned number, e.g. "sam" -> "sam.42". */
+    suspend fun claimUsername(nickname: String): ProfileResult
+
+    suspend fun clearUsername(): ProfileResult
 }
 
 /**
@@ -75,8 +121,12 @@ interface MessagingRepository {
 
     fun observeMessages(conversation: ConversationId): Flow<List<Message>>
 
-    /** Stores the message as Sending and queues it; returns immediately. */
-    suspend fun sendText(peer: UserId, text: String)
+    /**
+     * Stores the message as Sending and queues it; returns immediately.
+     * Returns false (and stores nothing) if the contact's key changed and
+     * the user has not acknowledged it.
+     */
+    suspend fun sendText(peer: UserId, text: String): Boolean
 
     /** Re-queues a message that failed permanently (user tapped retry). */
     suspend fun retry(messageId: String)

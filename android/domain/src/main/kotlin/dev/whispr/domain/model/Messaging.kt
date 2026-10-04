@@ -30,11 +30,29 @@ value class ConversationId(val value: String) {
     }
 }
 
-data class Contact(val userId: UserId, val displayName: String, val identityKey: ByteArray) {
+/**
+ * How much we trust a contact's pinned identity key.
+ * - Unverified: pinned on first sight (QR, username, or their request), not yet compared in person.
+ * - Verified: safety numbers compared in person.
+ * - KeyChanged: the server now reports a different key. Never accepted silently;
+ *   sending is blocked until the user acknowledges it.
+ */
+enum class TrustState { Unverified, Verified, KeyChanged }
+
+data class Contact(
+    val userId: UserId,
+    val displayName: String,
+    val identityKey: ByteArray,
+    val trust: TrustState = TrustState.Unverified,
+    /** They added us (or messaged us) and we have not accepted yet. */
+    val isRequest: Boolean = false,
+) {
     override fun equals(other: Any?) = other is Contact &&
         userId == other.userId &&
         displayName == other.displayName &&
-        identityKey.contentEquals(other.identityKey)
+        identityKey.contentEquals(other.identityKey) &&
+        trust == other.trust &&
+        isRequest == other.isRequest
 
     override fun hashCode() = userId.hashCode()
 }
@@ -65,7 +83,30 @@ sealed interface AddContactResult {
     data object NotFound : AddContactResult
     data object InvalidId : AddContactResult
     data object IsSelf : AddContactResult
+
+    /** Not a Whispr contact code, an unsupported version, or corrupted. */
+    data object InvalidCode : AddContactResult
+
+    /** The code names another server; never followed. */
+    data object DifferentServer : AddContactResult
+
+    /** The server reports a different key than the scanned code. Possible interception; nothing was added. */
+    data object KeyMismatch : AddContactResult
     data class Failed(val error: AuthError) : AddContactResult
+}
+
+/** Safety number for a contact: 60 digits to compare, and the text of the code to show as a QR. */
+data class SafetyNumber(val digits: String, val qrCode: String)
+
+enum class VerifyResult { Match, Mismatch, InvalidCode }
+
+data class MyProfile(val userId: UserId, val displayName: String, val username: String?, val avatarPath: String?)
+
+sealed interface ProfileResult {
+    data object Ok : ProfileResult
+    data object InvalidInput : ProfileResult
+    data object Unavailable : ProfileResult
+    data class Failed(val error: AuthError) : ProfileResult
 }
 
 /** Privacy settings for activity metadata. Both are off by default. */
