@@ -1,7 +1,8 @@
 # Whispr threat model
 
 Status: draft covering Phase 1 (identity, registration, sign-in, local
-storage) and Phase 2 (1:1 messaging, temporary contacts, push). Media gets its
+storage), Phase 2 (1:1 messaging, push) and Phase 3 (QR contacts,
+verification, usernames). Media gets its
 own section when built. "Gap" marks a known weakness we have accepted for now, each with a plan.
 
 ## Assets
@@ -156,8 +157,34 @@ encryption protects content even from a server or network that defeats TLS.
 | Push metadata to Google | FCM learns wake-up timing per device; Firebase Installations issues an ID. Delivery-metrics telemetry (datatransport) excluded from the build | Accepted; UnifiedPush can be added behind the same interface |
 | Notification content on the lock screen | VISIBILITY_PRIVATE with a public "New message" version | Done |
 | Activity metadata (read, typing) | Off by default and reciprocal; typing never stored | Done |
-| Contact key substitution by the server | Phase 2 trusts the server's identity key for an added ID | **Gap until Phase 3** (QR carries the key for out-of-band verification) |
-| Unknown sender spam | Anyone with your ID can message you; the sender's profile is fetched and shown | **Gap**: message requests or blocking to be added |
+| Contact key substitution by the server | QR codes carry the key out of band; keys are pinned; any change is flagged and must be acknowledged; safety numbers verify in person | Done (see Phase 3) |
+| Unknown sender spam | Strangers' messages land in Requests (accept or decline); no read receipts until accepted | Partial: no blocking yet |
+
+## Phase 3: QR contacts, verification, usernames
+
+### What the server learns
+
+| Data | Stored? | Notes |
+|---|---|---|
+| Username (`name.42`) | Yes, if claimed | Optional public handle. Lookups need the exact handle and are rate-limited (10/min per IP). Numbers are random, so they don't reveal how many people share a nickname. |
+| Who looked up whom | No | Lookups are not logged. |
+| Contact requests | As envelopes until delivered | Contain the requester's name and identity key, in plaintext until Phase 4. |
+| Safety numbers, verified state | No | Device only. |
+
+### Threats and mitigations
+
+| Threat | Mitigation | Status |
+|---|---|---|
+| Malicious QR (crash, injection, oversized data) | Length check before decoding, strict format, exact field lengths, libsignal key validation; never throws; fuzzed in tests | Done, tested |
+| QR redirecting the app to an attacker's server | Codes naming another server are rejected; the app never changes servers from a QR | Done, tested |
+| Server substituting the key when you scan | The server must report the same key as the code; on mismatch nothing is added | Done, tested |
+| Server substituting the key later | Key re-checked on every chat open; never replaced silently; Verified cleared; sending blocked until acknowledged | Done, tested on devices |
+| Server flip-flopping keys to trick acknowledgement | The held key follows the latest server answer and the warning stays | Done, tested |
+| Forged key inside a contact request | Cross-checked against the server; difference flagged | Done, tested |
+| Server swapping keys on both sides consistently | Only detectable by comparing safety numbers in person, which the Verify screen supports | Accepted; verification is the defence |
+| Username enumeration | Exact handles only; random 2–3 digit numbers; per-IP rate limit | Partial: a determined attacker can still probe numbers slowly |
+| Screenshots of QR codes shared remotely | A QR is not a secret (ID and public key); scanning alone never marks Verified | By design |
+| Camera frames leaking | Analysed in memory only; never stored or sent | Done |
 
 ## Accepted Phase-1 limitations (summary)
 
@@ -167,8 +194,10 @@ encryption protects content even from a server or network that defeats TLS.
 3. No app lock, no screen-security flag, no incognito keyboard flag yet.
 4. Spam resistance is weak (IP rate limit only).
 5. No production TLS endpoint or certificate pinning yet.
-6. Phase 2 only: message payloads are plaintext on the server until delivered,
-   and contact keys are trusted from the server (fixed in Phases 4 and 3).
+6. Message payloads (including contact requests) are plaintext on the server
+   until delivered, until Phase 4.
+7. Usernames and server-looked-up contacts start on trust-on-first-use; only
+   safety-number verification proves the key.
 
 ## Review triggers
 

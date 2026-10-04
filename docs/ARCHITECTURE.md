@@ -1,7 +1,7 @@
 # Whispr architecture
 
-Status: draft through Phase 2 (identity, authentication, app shell, 1:1
-messaging). It describes what exists today and marks what is planned.
+Status: draft through Phase 3 (identity, authentication, app shell, 1:1
+messaging, QR contacts and verification). It describes what exists today and marks what is planned.
 
 ## Goals and non-negotiables
 
@@ -27,7 +27,8 @@ server/                  Go service
   cmd/whisprd/           Entry point
   internal/auth/         Registration, challenge-response, tokens
   internal/messaging/    WebSocket gateway, opaque envelope store and relay
-  internal/contacts/     User lookup for adding contacts (by ID now, QR in Phase 3)
+  internal/contacts/     User lookup by ID (used after scanning a QR)
+  internal/profile/      Display name, optional usernames (name.42) and lookup
   internal/push/         Push token registration, content-free FCM wake-ups
   internal/sigverify/    libsignal signature verification via cgo (libsignal-ffi)
   internal/platform/     db, httpx, logging
@@ -287,11 +288,78 @@ sender                               server                                recip
 | Live (real server, two clients) | offline burst exactly once in order; delivered statuses; real time both ways; restart without duplicates |
 | Two emulators (manual run, 2026-10-04) | real-time chat; network loss and process kill on the recipient; queue counts verified in Postgres |
 
+## Contacts and verification (Phase 3)
+
+### Contact QR code
+
+`whispr:` + base64url(no padding) of
+`version(1)=1 ‖ flags(1)=0 ‖ user_id(16) ‖ identity_key(33) ‖ server_len(1) ‖ server`
+where `server` is an origin such as `https://chat.example.org`. About 100
+characters, so it fits a small QR code.
+
+Every scanned code is hostile input. `ContactQr.parse`:
+- checks the text length (≤ 512) before decoding;
+- requires the prefix, strict base64url, version 1 and zero flags;
+- checks every length field exactly and rejects trailing bytes;
+- validates the key with libsignal;
+- accepts only an HTTPS origin (HTTP for loopback in debug builds only), with
+  no user info, path or query;
+- rejects a server other than ours: the app never switches servers because of a QR.
+
+It never throws; errors become typed results with a calm message.
+
+### Adding a contact
+
+| Way | Key source | Starting trust |
+|---|---|---|
+| Scan their QR (camera or a picture of it) | The code; the server must report the same key, otherwise nothing is added (`KeyMismatch`) | Unverified |
+| Username lookup (`name.42`, exact handle only) | The server (trust on first use) | Unverified |
+| Their contact request (they scanned us) | The request; cross-checked against the server and flagged on any difference | Unverified, shown under Requests |
+
+The adder sends a `contact_request` envelope (name and identity key) through
+the outbox. The recipient sees it under **Requests** and accepts or declines;
+messages from strangers also land there. Opening a request never sends a read
+receipt. Both sides then have each other without scanning again.
+
+### Trust states
+
+`Unverified → Verified` only by comparing safety numbers (scanning the peer's
+code, or confirming the 60 digits match). `KeyChanged` whenever the server
+reports a key different from the pinned one (checked every time a chat opens),
+or a request or rescan carries one:
+- the pinned key is never replaced silently; the new one is held aside;
+- Verified is cleared and sending is blocked;
+- the chat shows a warning until the user accepts the new number, which pins
+  the *latest* server-reported key and returns to Unverified;
+- if the server keeps changing its answer, the held key follows the latest one,
+  so accepting can never pin a stale key.
+
+### Safety numbers
+
+Computed and compared only by libsignal: `NumericFingerprintGenerator(5200)`,
+version 2, with the 16-byte account IDs as stable identifiers. The screen
+shows 12 groups of 5 digits and a QR (`whispr-sn:` + base64url of the scannable
+fingerprint); scanning uses `ScannableFingerprint.compareTo`.
+
+### Scanner
+
+zxing-cpp (open source, on-device) on a CameraX preview, plus "Scan from image"
+through the system photo picker. Camera frames are analysed in memory and never
+stored. Decoded text goes straight to the parser above.
+
+### Testing (Phase 3)
+
+| Where | What |
+|---|---|
+| QR parser (JVM) | round trip; foreign, malformed, truncated and padded input; bad lengths, flags and keys; hostile server origins; other servers; 15,000 random inputs never throw |
+| Safety numbers (real libsignal) | both sides see the same digits; cross-scan matches; another key mismatches; hostile scans |
+| Contact trust (scripted server) | scan pins the key and sends a request; lying server adds nothing; key change flagged, sending blocked, verified cleared, acknowledgement; stale pending key; incoming requests; forged request keys; message requests and decline; usernames |
+| Server | username claim, lookup, release; nickname validation; distinct numbers; display-name updates; lookup rate limit |
+| Device | zxing-cpp decodes what we render, including inverted codes |
+| Two emulators (2026-10-04) | database upgrade keeps chats; B scans A's code; A accepts; chat both ways and after restarts; both verify each other; simulated key change on the server shows the warning and blocks sending; acknowledgement restores the original number |
+
 ## Planned next (not built)
 
-- Contacts by QR: the QR code carries user ID and identity key; scanning
-  verifies the key out of band (protects against a malicious server
-  substituting keys).
 - Encryption (Phase 4): libsignal sessions (PQXDH and Double Ratchet via
   libsignal) and prekey upload. Envelope payloads become ciphertext; nothing on
   the server changes.

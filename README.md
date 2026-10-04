@@ -66,8 +66,11 @@ WHISPR_SERVER_URL=http://127.0.0.1:8080/ ./gradlew :data:testDebugUnitTest
 ### Chatting between two devices
 
 Install the debug app on two emulators or phones, run `adb -s <device> reverse
-tcp:8080 tcp:8080` for each, and onboard both. On one, tap **New chat** and paste
-the other's account ID (Settings → Account ID, or shown on the New chat screen).
+tcp:8080 tcp:8080` for each, and onboard both. On one phone open **My code**; on
+the other tap **New chat → Scan QR code** and scan it (or use **Scan from image**
+with a picture of it). The first person accepts the request, and you can chat.
+To verify each other, open a chat and tap the verify icon, then compare the
+numbers or scan each other's code.
 
 ### Push (optional)
 
