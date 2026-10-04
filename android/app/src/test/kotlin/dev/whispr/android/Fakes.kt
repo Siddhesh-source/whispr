@@ -63,3 +63,49 @@ class FakeConnectivity(online: Boolean = true) : ConnectivityRepository {
 }
 
 val registered = Account(UserId("00000000-0000-0000-0000-000000000001"), "Ada", null)
+
+class FakeMessaging : dev.whispr.domain.repository.MessagingRepository {
+    override val connection = MutableStateFlow(dev.whispr.domain.model.ConnectionState.Connected)
+    val conversations = MutableStateFlow<List<dev.whispr.domain.model.ConversationSummary>>(emptyList())
+    val messages = MutableStateFlow<List<dev.whispr.domain.model.Message>>(emptyList())
+    val typing = MutableStateFlow(false)
+    val sent = mutableListOf<Pair<UserId, String>>()
+    val retried = mutableListOf<String>()
+    var markedRead = 0
+    var typingCalls = 0
+
+    override fun observeConversations() = conversations
+    override fun observeMessages(conversation: dev.whispr.domain.model.ConversationId) = messages
+    override suspend fun sendText(peer: UserId, text: String) {
+        sent += peer to text
+    }
+    override suspend fun retry(messageId: String) {
+        retried += messageId
+    }
+    override suspend fun markRead(conversation: dev.whispr.domain.model.ConversationId) {
+        markedRead++
+    }
+    override suspend fun onTyping(peer: UserId) {
+        typingCalls++
+    }
+    override fun observePeerTyping(conversation: dev.whispr.domain.model.ConversationId) = typing
+}
+
+class FakeContacts : dev.whispr.domain.repository.ContactsRepository {
+    val contacts = MutableStateFlow<List<dev.whispr.domain.model.Contact>>(emptyList())
+    var result: dev.whispr.domain.model.AddContactResult = dev.whispr.domain.model.AddContactResult.NotFound
+    override fun observeContacts() = contacts
+    override suspend fun contact(userId: UserId) = contacts.value.firstOrNull { it.userId == userId }
+    override suspend fun addById(rawUserId: String) = result
+}
+
+class FakeSettings : dev.whispr.domain.repository.SettingsRepository {
+    val privacy = MutableStateFlow(dev.whispr.domain.model.PrivacySettings())
+    override fun observePrivacy() = privacy
+    override suspend fun setReadReceipts(enabled: Boolean) {
+        privacy.value = privacy.value.copy(readReceipts = enabled)
+    }
+    override suspend fun setTypingIndicators(enabled: Boolean) {
+        privacy.value = privacy.value.copy(typingIndicators = enabled)
+    }
+}

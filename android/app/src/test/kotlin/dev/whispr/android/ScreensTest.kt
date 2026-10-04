@@ -82,6 +82,7 @@ class ScreensTest {
     fun chatsEmptyWithOfflineBanner() {
         chats(ChatsUiState(content = ChatsContent.Empty, offline = true))
         rule.onNodeWithText("No conversations yet").assertIsDisplayed()
+        rule.onNodeWithText("New chat").assertIsDisplayed()
         rule.onNodeWithText("You're offline. Messages will send when you reconnect.").assertIsDisplayed()
         rule.onNodeWithContentDescription("Settings").assertIsDisplayed()
     }

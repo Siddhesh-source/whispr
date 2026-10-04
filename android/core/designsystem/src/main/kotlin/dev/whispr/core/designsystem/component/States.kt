@@ -144,15 +144,11 @@ fun LoadingState(modifier: Modifier = Modifier, label: String = stringResource(R
 }
 
 /**
- * A slim, non-blocking banner shown at the top of a screen while offline.
- * Content stays usable underneath; outgoing messages queue.
+ * A slim, non-blocking notice at the top of a screen. Announced politely to
+ * screen readers when it appears.
  */
 @Composable
-fun OfflineBanner(
-    visible: Boolean,
-    modifier: Modifier = Modifier,
-    message: String = stringResource(R.string.ds_offline_banner),
-) {
+fun NoticeBanner(visible: Boolean, message: String, icon: ImageVector, modifier: Modifier = Modifier) {
     AnimatedVisibility(visible = visible, enter = expandVertically(), exit = shrinkVertically(), modifier = modifier) {
         Surface(color = WhisprTheme.colors.banner, contentColor = WhisprTheme.colors.onBanner) {
             Row(
@@ -163,15 +159,23 @@ fun OfflineBanner(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(WhisprTheme.spacing.sm),
             ) {
-                Icon(
-                    WhisprIcons.Offline,
-                    contentDescription = null,
-                    modifier = Modifier.size(WhisprTheme.sizes.iconSmall),
-                )
+                Icon(icon, contentDescription = null, modifier = Modifier.size(WhisprTheme.sizes.iconSmall))
                 Text(message, style = MaterialTheme.typography.bodySmall)
             }
         }
     }
+}
+
+/**
+ * Shown while offline. Content stays usable underneath; outgoing messages queue.
+ */
+@Composable
+fun OfflineBanner(
+    visible: Boolean,
+    modifier: Modifier = Modifier,
+    message: String = stringResource(R.string.ds_offline_banner),
+) {
+    NoticeBanner(visible = visible, message = message, icon = WhisprIcons.Offline, modifier = modifier)
 }
 
 @ComponentPreviews

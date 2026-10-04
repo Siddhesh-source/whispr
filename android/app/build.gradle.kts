@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
@@ -14,6 +16,15 @@ plugins {
 // Override with -Pwhispr.serverUrl=...
 val debugServerUrl = providers.gradleProperty("whispr.serverUrl").getOrElse("http://127.0.0.1:8080/")
 
+// Firebase (push) is optional. Without these values the app builds and runs
+// with push disabled. Put them in android/firebase.properties (git-ignored),
+// copied from the Firebase console's google-services.json.
+val firebase = Properties().apply {
+    rootProject.file("firebase.properties").takeIf { it.isFile }?.inputStream()?.use { load(it) }
+}
+fun firebaseValue(key: String) =
+    firebase.getProperty(key) ?: providers.environmentVariable("WHISPR_" + key.uppercase()).orNull ?: ""
+
 android {
     namespace = "dev.whispr.android"
     compileSdk = 37
@@ -25,6 +36,10 @@ android {
         versionCode = 1
         versionName = "0.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        buildConfigField("String", "FIREBASE_APP_ID", "\"${firebaseValue("app_id")}\"")
+        buildConfigField("String", "FIREBASE_API_KEY", "\"${firebaseValue("api_key")}\"")
+        buildConfigField("String", "FIREBASE_PROJECT_ID", "\"${firebaseValue("project_id")}\"")
+        buildConfigField("String", "FIREBASE_SENDER_ID", "\"${firebaseValue("sender_id")}\"")
     }
     buildTypes {
         debug {
@@ -77,6 +92,15 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.navigation.compose)
+    implementation(libs.androidx.lifecycle.process)
+    implementation(libs.kotlinx.coroutines.play.services)
+    implementation(libs.firebase.messaging) {
+        // Delivery-metrics telemetry to Google (Firelog). Not needed for
+        // receiving wake-ups; messaging treats the transport as optional.
+        exclude(group = "com.google.firebase", module = "firebase-datatransport")
+        exclude(group = "com.google.android.datatransport", module = "transport-backend-cct")
+        exclude(group = "com.google.android.datatransport", module = "transport-runtime")
+    }
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.hilt.android)
     implementation(libs.hilt.lifecycle.viewmodel.compose)
@@ -86,6 +110,7 @@ dependencies {
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.turbine)
+    testImplementation(libs.androidx.navigation.testing)
     testImplementation(libs.robolectric)
     testImplementation(libs.androidx.test.core)
     testImplementation(libs.androidx.test.ext.junit)
@@ -98,7 +123,7 @@ dependencies {
 
 // Screens must take colors, sizes and type from the design system
 // (:core:designsystem). Fails the build on literals in app sources.
-val checkDesignTokens by tasks.registering {
+val checkDesignTokens = tasks.register("checkDesignTokens") {
     group = "verification"
     description = "Fails if app sources hard-code colors, dp or sp values."
     val sources = fileTree("src/main/kotlin") { include("**/*.kt") }

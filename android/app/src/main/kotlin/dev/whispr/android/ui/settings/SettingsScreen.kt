@@ -1,24 +1,34 @@
 package dev.whispr.android.ui.settings
 
+import android.content.ClipData
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.ClipEntry
+import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
@@ -31,16 +41,28 @@ import dev.whispr.core.designsystem.component.LoadingState
 import dev.whispr.core.designsystem.component.OfflineBanner
 import dev.whispr.core.designsystem.component.WhisprAvatar
 import dev.whispr.core.designsystem.component.WhisprTopBar
+import dev.whispr.core.designsystem.icon.WhisprIcons
 import dev.whispr.core.designsystem.theme.WhisprTheme
+import kotlinx.coroutines.launch
 
 @Composable
 fun SettingsRoute(onBack: () -> Unit, viewModel: SettingsViewModel = hiltViewModel()) {
     val state by viewModel.state.collectAsStateWithLifecycle()
-    SettingsScreen(state = state, onBack = onBack)
+    SettingsScreen(
+        state = state,
+        onBack = onBack,
+        onReadReceipts = viewModel::setReadReceipts,
+        onTypingIndicators = viewModel::setTypingIndicators,
+    )
 }
 
 @Composable
-fun SettingsScreen(state: SettingsUiState, onBack: () -> Unit) {
+fun SettingsScreen(
+    state: SettingsUiState,
+    onBack: () -> Unit,
+    onReadReceipts: (Boolean) -> Unit = {},
+    onTypingIndicators: (Boolean) -> Unit = {},
+) {
     Scaffold(
         containerColor = MaterialTheme.colorScheme.surface,
         topBar = { WhisprTopBar(title = stringResource(R.string.settings_title), onNavigateBack = onBack) },
@@ -55,14 +77,20 @@ fun SettingsScreen(state: SettingsUiState, onBack: () -> Unit) {
                     onRetry = onBack,
                     retryLabel = stringResource(R.string.settings_error_action),
                 )
-                is SettingsUiState.Content -> SettingsContent(state)
+                is SettingsUiState.Content -> SettingsContent(state, onReadReceipts, onTypingIndicators)
             }
         }
     }
 }
 
 @Composable
-private fun SettingsContent(state: SettingsUiState.Content) {
+private fun SettingsContent(
+    state: SettingsUiState.Content,
+    onReadReceipts: (Boolean) -> Unit,
+    onTypingIndicators: (Boolean) -> Unit,
+) {
+    val clipboard = LocalClipboard.current
+    val clipScope = rememberCoroutineScope()
     val spacing = WhisprTheme.spacing
     val avatar by rememberAvatarBitmap(state.avatarPath)
     Column(Modifier.fillMaxSize()) {
@@ -87,13 +115,56 @@ private fun SettingsContent(state: SettingsUiState.Content) {
             Column(Modifier.widthIn(max = WhisprTheme.sizes.contentMaxWidth).padding(top = spacing.xl)) {
                 SettingRow(stringResource(R.string.settings_connection), connectionText(state.connection))
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                SettingRow(stringResource(R.string.settings_account_id), state.userId)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.weight(1f)) { SettingRow(stringResource(R.string.settings_account_id), state.userId) }
+                    IconButton(onClick = {
+                        clipScope.launch {
+                            clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("account ID", state.userId)))
+                        }
+                    }) {
+                        Icon(WhisprIcons.Copy, contentDescription = stringResource(R.string.settings_copy_id))
+                    }
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                ToggleRow(
+                    stringResource(R.string.settings_read_receipts),
+                    stringResource(R.string.settings_read_receipts_body),
+                    state.readReceipts,
+                    onReadReceipts,
+                )
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                ToggleRow(
+                    stringResource(R.string.settings_typing),
+                    stringResource(R.string.settings_typing_body),
+                    state.typingIndicators,
+                    onTypingIndicators,
+                )
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 SettingRow(stringResource(R.string.settings_privacy), stringResource(R.string.settings_privacy_body))
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 SettingRow(stringResource(R.string.settings_version), state.version)
             }
         }
+    }
+}
+
+/** A switch whose whole row is the touch target, announced as one toggle. */
+@Composable
+private fun ToggleRow(label: String, body: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .heightIn(min = WhisprTheme.sizes.minTouchTarget)
+            .toggleable(value = checked, role = Role.Switch, onValueChange = onChange)
+            .padding(horizontal = WhisprTheme.spacing.lg, vertical = WhisprTheme.spacing.md),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(WhisprTheme.spacing.lg),
+    ) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(WhisprTheme.spacing.xxs)) {
+            Text(label, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface)
+            Text(body, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Switch(checked = checked, onCheckedChange = null)
     }
 }
 

@@ -22,4 +22,7 @@ object WhisprIcons {
     val Settings: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ic_settings)
     val Refresh: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ic_refresh)
     val Person: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ic_person)
+    val PersonAdd: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ic_person_add)
+    val Copy: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ic_copy)
+    val Unlocked: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ic_lock_open)
 }

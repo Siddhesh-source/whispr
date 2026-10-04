@@ -102,11 +102,21 @@ class ViewModelsTest {
     @Test
     fun chatsStates() = runTest(dispatcher) {
         accounts.state.value = registered
-        val vm = ChatsViewModel(accounts, auth, connectivity)
+        val messaging = FakeMessaging()
+        val vm = ChatsViewModel(messaging, auth, connectivity)
         vm.state.test {
             // The initial Loading value is replaced immediately under an unconfined dispatcher;
             // ScreensTest covers how Loading renders.
             assertEquals(ChatsContent.Empty, awaitItem().content)
+
+            val summary = dev.whispr.domain.model.ConversationSummary(
+                dev.whispr.domain.model.ConversationId("c"),
+                dev.whispr.domain.model.Contact(registered.userId!!, "Bob", ByteArray(0)),
+                null,
+                0,
+            )
+            messaging.conversations.value = listOf(summary)
+            assertEquals(ChatsContent.Conversations(listOf(summary)), awaitItem().content)
 
             auth.session.value = SessionState.Unavailable(AuthError.Server)
             assertTrue(awaitItem().serverUnreachable)
@@ -127,13 +137,17 @@ class ViewModelsTest {
     fun settingsShowsAccountAndConnection() = runTest(dispatcher) {
         accounts.state.value = registered
         auth.session.value = SessionState.Active(Instant.MAX)
-        val vm = SettingsViewModel(accounts, auth, connectivity)
+        val settings = FakeSettings()
+        val vm = SettingsViewModel(accounts, auth, connectivity, settings)
         vm.state.test {
             val content = awaitItem() as SettingsUiState.Content
             assertEquals(registered.userId!!.value, content.userId)
             assertEquals(ConnectionStatus.Active, content.connection)
             connectivity.online.value = false
             assertEquals(ConnectionStatus.Offline, (awaitItem() as SettingsUiState.Content).connection)
+            assertFalse("privacy toggles default off", content.readReceipts || content.typingIndicators)
+            vm.setReadReceipts(true)
+            assertTrue((awaitItem() as SettingsUiState.Content).readReceipts)
         }
     }
 

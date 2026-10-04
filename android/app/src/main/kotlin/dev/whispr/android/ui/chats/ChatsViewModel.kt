@@ -4,10 +4,11 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.whispr.domain.model.AuthError
+import dev.whispr.domain.model.ConversationSummary
 import dev.whispr.domain.model.SessionState
-import dev.whispr.domain.repository.AccountRepository
 import dev.whispr.domain.repository.AuthRepository
 import dev.whispr.domain.repository.ConnectivityRepository
+import dev.whispr.domain.repository.MessagingRepository
 import javax.inject.Inject
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -18,6 +19,7 @@ import kotlinx.coroutines.launch
 sealed interface ChatsContent {
     data object Loading : ChatsContent
     data object Empty : ChatsContent
+    data class Conversations(val items: List<ConversationSummary>) : ChatsContent
 
     /** The server refuses our identity; nothing will work until this is resolved. */
     data object SignInRejected : ChatsContent
@@ -26,27 +28,29 @@ sealed interface ChatsContent {
 data class ChatsUiState(
     val content: ChatsContent = ChatsContent.Loading,
     val offline: Boolean = false,
-    /** Online, but the server is failing; non-blocking because the chat list is local. */
+    /** Online, but the server is failing; non-blocking because the list is local. */
     val serverUnreachable: Boolean = false,
 )
 
 @HiltViewModel
 class ChatsViewModel @Inject constructor(
-    accounts: AccountRepository,
+    messaging: MessagingRepository,
     private val auth: AuthRepository,
     connectivity: ConnectivityRepository,
 ) : ViewModel() {
 
-    // Conversations arrive with the messaging phase; until then a loaded
-    // account always means an empty list.
-    val state: StateFlow<ChatsUiState> = combine(accounts.observeAccount(), auth.session, connectivity.isOnline) {
-            _,
-            session,
-            online,
-        ->
+    val state: StateFlow<ChatsUiState> = combine(
+        messaging.observeConversations(),
+        auth.session,
+        connectivity.isOnline,
+    ) { conversations, session, online ->
         val unavailable = (session as? SessionState.Unavailable)?.error
         ChatsUiState(
-            content = if (unavailable == AuthError.Rejected) ChatsContent.SignInRejected else ChatsContent.Empty,
+            content = when {
+                unavailable == AuthError.Rejected -> ChatsContent.SignInRejected
+                conversations.isEmpty() -> ChatsContent.Empty
+                else -> ChatsContent.Conversations(conversations)
+            },
             offline = !online,
             serverUnreachable = online && (unavailable == AuthError.Network || unavailable == AuthError.Server),
         )
