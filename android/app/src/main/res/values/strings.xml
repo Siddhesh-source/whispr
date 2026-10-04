@@ -24,7 +24,7 @@
     <string name="chats_settings">Settings</string>
     <string name="chats_loading">Loading chats</string>
     <string name="chats_empty_title">No conversations yet</string>
-    <string name="chats_empty_message">Add a contact by their account ID to start a private chat.</string>
+    <string name="chats_empty_message">Scan a friend\'s QR code or find them by username to start a private chat.</string>
     <string name="chats_error_rejected_title">Can\'t sign in</string>
     <string name="chats_error_rejected_message">The server doesn\'t recognise this device\'s identity.</string>
     <string name="chats_server_unreachable">Can\'t reach the server right now. Retrying automatically.</string>
@@ -51,14 +51,6 @@
 
     <!-- Add contact -->
     <string name="add_contact_title">New chat</string>
-    <string name="add_contact_id_label">Their account ID</string>
-    <string name="add_contact_hint">Ask your contact for the account ID shown in their Settings. Adding by QR code replaces this soon.</string>
-    <string name="add_contact_action">Start chat</string>
-    <string name="add_contact_my_id">Your account ID</string>
-    <string name="add_contact_copy">Copy your account ID</string>
-    <string name="add_contact_copied">Copied</string>
-    <string name="add_contact_invalid">That doesn\'t look like an account ID.</string>
-    <string name="add_contact_not_found">No account with that ID.</string>
     <string name="add_contact_self">That\'s your own account ID.</string>
     <string name="add_contact_network">Couldn\'t reach the server. Check your connection and try again.</string>
     <string name="add_contact_server">Something went wrong on our side. Please try again.</string>
@@ -83,4 +75,80 @@
     <!-- Notifications -->
     <string name="notification_channel_messages">Messages</string>
     <string name="notification_new_message">New message</string>
+    <!-- New chat -->
+    <string name="new_chat_scan">Scan QR code</string>
+    <string name="new_chat_scan_hint">Scan your contact\'s code in person, or a picture of it they sent you.</string>
+    <string name="new_chat_username_label">Username (e.g. sam.42)</string>
+    <string name="new_chat_username_action">Find</string>
+    <string name="new_chat_or">Or find them by username</string>
+    <string name="new_chat_my_code">Show my code</string>
+    <string name="add_error_invalid_username">Usernames look like name.42.</string>
+    <string name="add_error_invalid_code">That isn\'t a Whispr contact code.</string>
+    <string name="add_error_other_server">That contact uses a different server, which isn\'t supported yet.</string>
+    <string name="add_error_key_mismatch">The server reported a different key than this code. Nothing was added. Someone may be interfering; try again later.</string>
+    <string name="add_error_not_found_username">No one has that username.</string>
+
+    <!-- Scanner -->
+    <string name="scan_title">Scan code</string>
+    <string name="scan_viewfinder">Camera viewfinder. Point it at a Whispr code.</string>
+    <string name="scan_no_camera">Camera access lets you scan codes in person. You can also scan a picture of a code.</string>
+    <string name="scan_allow_camera">Allow camera</string>
+    <string name="scan_from_image">Scan from image</string>
+    <string name="scan_no_code_in_image">No code found in that image.</string>
+    <string name="scan_adding">Adding contact</string>
+
+    <!-- My code -->
+    <string name="my_code_title">My code</string>
+    <string name="my_code_description">Your Whispr contact code</string>
+    <string name="my_code_hint">Let a contact scan this to add you. It contains your account ID and public key, nothing secret.</string>
+    <string name="my_code_username">Username: %1$s</string>
+
+    <!-- Verify -->
+    <string name="verify_title">Verify %1$s</string>
+    <string name="verify_hint">Compare these numbers with %1$s in person, or scan their code. If they match, no one is intercepting your conversation.</string>
+    <string name="verify_code_description">Your safety number code for %1$s</string>
+    <string name="verify_scan_theirs">Scan their code</string>
+    <string name="verify_mark">Mark as verified</string>
+    <string name="verify_clear">Clear verification</string>
+    <string name="verify_verified">Verified</string>
+    <string name="verify_match">Numbers match. %1$s is verified.</string>
+    <string name="verify_mismatch">These numbers don\'t match. Don\'t mark this contact as verified.</string>
+    <string name="verify_invalid">That isn\'t a safety number code.</string>
+    <string name="verify_unavailable">Accept or review the safety number change first.</string>
+    <string name="verify_loading">Loading safety number</string>
+
+    <!-- Chat additions -->
+    <string name="chat_verify">Verify safety number</string>
+    <string name="chat_verified_badge">Verified</string>
+    <string name="chat_key_changed_title">Safety number changed</string>
+    <string name="chat_key_changed_message">%1$s\'s safety number is different from before. They may have reinstalled, or someone may be intercepting. Sending is paused until you accept the new number; verify it in person when you can.</string>
+    <string name="chat_key_changed_accept">Accept new number</string>
+    <string name="chat_request_message">%1$s wants to chat with you.</string>
+    <string name="chat_request_accept">Accept</string>
+    <string name="chat_request_decline">Decline</string>
+
+    <!-- Chat list additions -->
+    <string name="chats_my_code">My code</string>
+    <string name="chats_requests">Requests</string>
+    <string name="chats_request_preview">Wants to chat with you</string>
+    <string name="chats_key_changed_preview">Safety number changed</string>
+
+    <!-- Profile -->
+    <string name="settings_edit_profile">Edit profile</string>
+    <string name="settings_my_code">My code</string>
+    <string name="profile_title">Edit profile</string>
+    <string name="profile_name_label">Your name</string>
+    <string name="profile_save_name">Save name</string>
+    <string name="profile_change_photo">Change profile photo</string>
+    <string name="profile_photo_hint">Your photo stays on this device.</string>
+    <string name="profile_username_heading">Username</string>
+    <string name="profile_username_body">Optional. Lets people find you without scanning a code. A number is added to your nickname, e.g. sam.42.</string>
+    <string name="profile_nickname_label">Nickname</string>
+    <string name="profile_claim_username">Get username</string>
+    <string name="profile_remove_username">Remove username</string>
+    <string name="profile_saved">Saved</string>
+    <string name="profile_error_invalid_name">Names need 1 to 64 characters, without control characters.</string>
+    <string name="profile_error_invalid_nickname">Nicknames are 3 to 32 letters, digits or _, starting with a letter.</string>
+    <string name="profile_error_unavailable">That nickname is busy. Try another.</string>
+    <string name="profile_error_network">Couldn\'t reach the server. Check your connection and try again.</string>
 </resources>

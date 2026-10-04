@@ -10,6 +10,7 @@ import dev.whispr.android.notifications.ActiveConversation
 import dev.whispr.core.designsystem.component.BubbleGroupPosition
 import dev.whispr.domain.model.ConversationId
 import dev.whispr.domain.model.Message
+import dev.whispr.domain.model.TrustState
 import dev.whispr.domain.model.UserId
 import dev.whispr.domain.repository.AccountRepository
 import dev.whispr.domain.repository.ConnectivityRepository
@@ -42,13 +43,19 @@ data class ChatUiState(
     val peerTyping: Boolean = false,
     val offline: Boolean = false,
     val input: String = "",
-)
+    val trust: TrustState = TrustState.Unverified,
+    /** They added us and we have not accepted yet. */
+    val isRequest: Boolean = false,
+) {
+    /** Sending is only possible for accepted contacts with no unacknowledged key change. */
+    val canCompose: Boolean get() = !isRequest && trust != TrustState.KeyChanged
+}
 
 @OptIn(ExperimentalCoroutinesApi::class)
 @HiltViewModel
 class ChatViewModel @Inject constructor(
     savedState: SavedStateHandle,
-    contacts: ContactsRepository,
+    private val contacts: ContactsRepository,
     accounts: AccountRepository,
     connectivity: ConnectivityRepository,
     private val messaging: MessagingRepository,
@@ -79,6 +86,8 @@ class ChatViewModel @Inject constructor(
             peerTyping = isTyping,
             offline = !online,
             input = text,
+            trust = c?.trust ?: TrustState.Unverified,
+            isRequest = c?.isRequest == true,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), ChatUiState())
 
@@ -87,11 +96,33 @@ class ChatViewModel @Inject constructor(
         if (text.isNotBlank()) viewModelScope.launch { messaging.onTyping(peer) }
     }
 
+    init {
+        // Every time the chat opens, compare the pinned key with what the server reports now.
+        viewModelScope.launch { contacts.refreshKey(peer) }
+    }
+
     fun send() {
         val text = input.value.trim()
-        if (text.isEmpty()) return
-        input.value = ""
-        viewModelScope.launch { messaging.sendText(peer, text) }
+        if (text.isEmpty() || !state.value.canCompose) return
+        viewModelScope.launch {
+            // Keep the draft if sending is refused (e.g. a key change arrived meanwhile).
+            if (messaging.sendText(peer, text)) input.value = ""
+        }
+    }
+
+    fun acceptRequest() {
+        viewModelScope.launch { contacts.acceptRequest(peer) }
+    }
+
+    fun declineRequest(onDone: () -> Unit) {
+        viewModelScope.launch {
+            contacts.declineRequest(peer)
+            onDone()
+        }
+    }
+
+    fun acknowledgeKeyChange() {
+        viewModelScope.launch { contacts.acknowledgeKeyChange(peer) }
     }
 
     fun retry(messageId: String) {
@@ -102,7 +133,8 @@ class ChatViewModel @Inject constructor(
     fun onVisible() {
         val id = conversation.value ?: return
         active.current.value = id
-        viewModelScope.launch { messaging.markRead(id) }
+        // No read receipts for message requests: that would confirm the account is active.
+        if (!state.value.isRequest) viewModelScope.launch { messaging.markRead(id) }
     }
 
     fun onHidden() {

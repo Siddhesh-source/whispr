@@ -27,6 +27,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.core.content.ContextCompat
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -40,12 +42,15 @@ import dev.whispr.core.designsystem.component.OfflineBanner
 import dev.whispr.core.designsystem.component.WhisprPrimaryButton
 import dev.whispr.core.designsystem.component.WhisprTopBar
 import dev.whispr.core.designsystem.icon.WhisprIcons
+import dev.whispr.core.designsystem.theme.WhisprTheme
 import dev.whispr.domain.model.ConversationSummary
+import dev.whispr.domain.model.TrustState
 import dev.whispr.domain.model.UserId
 
 @Composable
 fun ChatsRoute(
     onOpenSettings: () -> Unit,
+    onMyCode: () -> Unit,
     onOpenChat: (UserId) -> Unit,
     onNewChat: () -> Unit,
     viewModel: ChatsViewModel = hiltViewModel(),
@@ -55,6 +60,7 @@ fun ChatsRoute(
     ChatsScreen(
         state = state,
         onOpenSettings = onOpenSettings,
+        onMyCode = onMyCode,
         onOpenChat = onOpenChat,
         onNewChat = onNewChat,
         onRetry = viewModel::retrySignIn,
@@ -68,6 +74,7 @@ fun ChatsScreen(
     onRetry: () -> Unit,
     onOpenChat: (UserId) -> Unit = {},
     onNewChat: () -> Unit = {},
+    onMyCode: () -> Unit = {},
 ) {
     val newChat = stringResource(R.string.chats_new_chat)
     Scaffold(
@@ -76,6 +83,9 @@ fun ChatsScreen(
             WhisprTopBar(
                 title = stringResource(R.string.chats_title),
                 actions = {
+                    IconButton(onClick = onMyCode) {
+                        Icon(WhisprIcons.QrCode, contentDescription = stringResource(R.string.chats_my_code))
+                    }
                     IconButton(onClick = onOpenSettings) {
                         Icon(WhisprIcons.Settings, contentDescription = stringResource(R.string.chats_settings))
                     }
@@ -121,24 +131,45 @@ fun ChatsScreen(
 
 @Composable
 private fun ConversationList(items: List<ConversationSummary>, onOpenChat: (UserId) -> Unit) {
+    // Requests first, under their own heading; accepted chats below.
+    val (requests, chats) = items.partition { it.peer.isRequest }
     LazyColumn(Modifier.fillMaxSize()) {
-        items(items, key = { it.id.value }) { item ->
-            val last = item.lastMessage
-            val preview = when {
-                last == null -> ""
-                last.outgoing -> stringResource(R.string.chats_you_prefix, last.text)
-                else -> last.text
+        if (requests.isNotEmpty()) {
+            item(key = "requests-header") {
+                Text(
+                    stringResource(R.string.chats_requests),
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier
+                        .padding(horizontal = WhisprTheme.spacing.lg, vertical = WhisprTheme.spacing.sm)
+                        .semantics { heading() },
+                )
             }
-            ChatListRow(
-                name = item.peer.displayName,
-                lastMessage = preview,
-                time = last?.let { formatTimestamp(it.timestamp) }.orEmpty(),
-                onClick = { onOpenChat(item.peer.userId) },
-                unreadCount = item.unreadCount,
-            )
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            items(requests, key = { "r-" + it.id.value }) { ConversationRow(it, onOpenChat) }
+            item(key = "requests-divider") { HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant) }
         }
+        items(chats, key = { it.id.value }) { ConversationRow(it, onOpenChat) }
     }
+}
+
+@Composable
+private fun ConversationRow(item: ConversationSummary, onOpenChat: (UserId) -> Unit) {
+    val last = item.lastMessage
+    val preview = when {
+        item.peer.trust == TrustState.KeyChanged -> stringResource(R.string.chats_key_changed_preview)
+        last == null && item.peer.isRequest -> stringResource(R.string.chats_request_preview)
+        last == null -> ""
+        last.outgoing -> stringResource(R.string.chats_you_prefix, last.text)
+        else -> last.text
+    }
+    ChatListRow(
+        name = item.peer.displayName,
+        lastMessage = preview,
+        time = last?.let { formatTimestamp(it.timestamp) }.orEmpty(),
+        onClick = { onOpenChat(item.peer.userId) },
+        unreadCount = item.unreadCount,
+    )
+    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 }
 
 /** Asks for notification permission (Android 13+) once there are chats to notify about. */

@@ -4,18 +4,26 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
@@ -32,13 +40,16 @@ import dev.whispr.core.designsystem.component.MessageBubble
 import dev.whispr.core.designsystem.component.MessageInputBar
 import dev.whispr.core.designsystem.component.NoticeBanner
 import dev.whispr.core.designsystem.component.OfflineBanner
+import dev.whispr.core.designsystem.component.WarningCard
+import dev.whispr.core.designsystem.component.WhisprPrimaryButton
 import dev.whispr.core.designsystem.component.WhisprTopBar
 import dev.whispr.core.designsystem.icon.WhisprIcons
 import dev.whispr.core.designsystem.theme.WhisprTheme
 import dev.whispr.domain.model.MessageStatus
+import dev.whispr.domain.model.TrustState
 
 @Composable
-fun ChatRoute(onBack: () -> Unit, viewModel: ChatViewModel = hiltViewModel()) {
+fun ChatRoute(onBack: () -> Unit, onVerify: () -> Unit, viewModel: ChatViewModel = hiltViewModel()) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val count = (state.content as? ChatContent.Messages)?.items?.size ?: 0
     // Only while actually on screen: mark read (sends a receipt if enabled)
@@ -53,6 +64,10 @@ fun ChatRoute(onBack: () -> Unit, viewModel: ChatViewModel = hiltViewModel()) {
         onInput = viewModel::onInput,
         onSend = viewModel::send,
         onRetry = viewModel::retry,
+        onVerify = onVerify,
+        onAccept = viewModel::acceptRequest,
+        onDecline = { viewModel.declineRequest(onBack) },
+        onAcknowledgeKeyChange = viewModel::acknowledgeKeyChange,
     )
 }
 
@@ -63,6 +78,10 @@ fun ChatScreen(
     onInput: (String) -> Unit,
     onSend: () -> Unit,
     onRetry: (String) -> Unit,
+    onVerify: () -> Unit = {},
+    onAccept: () -> Unit = {},
+    onDecline: () -> Unit = {},
+    onAcknowledgeKeyChange: () -> Unit = {},
 ) {
     Scaffold(
         containerColor = MaterialTheme.colorScheme.surface,
@@ -71,6 +90,15 @@ fun ChatScreen(
                 title = state.peerName,
                 onNavigateBack = onBack,
                 subtitle = if (state.peerTyping) stringResource(R.string.chat_typing) else null,
+                titleBadge = if (state.trust == TrustState.Verified) WhisprIcons.Verified else null,
+                titleBadgeDescription = stringResource(R.string.chat_verified_badge),
+                actions = {
+                    if (state.content !is ChatContent.Missing) {
+                        IconButton(onClick = onVerify) {
+                            Icon(WhisprIcons.Verified, contentDescription = stringResource(R.string.chat_verify))
+                        }
+                    }
+                },
             )
         },
     ) { padding ->
@@ -102,12 +130,23 @@ fun ChatScreen(
                 }
             }
             if (state.content is ChatContent.Messages) {
-                MessageInputBar(
-                    value = state.input,
-                    onValueChange = onInput,
-                    onSend = onSend,
-                    modifier = Modifier.navigationBarsPadding(),
-                )
+                when {
+                    // Never accepted silently: sending stays paused until the user decides.
+                    state.trust == TrustState.KeyChanged -> WarningCard(
+                        title = stringResource(R.string.chat_key_changed_title),
+                        message = stringResource(R.string.chat_key_changed_message, state.peerName),
+                        primaryLabel = stringResource(R.string.chat_key_changed_accept),
+                        onPrimary = onAcknowledgeKeyChange,
+                        modifier = Modifier.padding(WhisprTheme.spacing.md).navigationBarsPadding(),
+                    )
+                    state.isRequest -> RequestBar(state.peerName, onAccept, onDecline)
+                    else -> MessageInputBar(
+                        value = state.input,
+                        onValueChange = onInput,
+                        onSend = onSend,
+                        modifier = Modifier.navigationBarsPadding(),
+                    )
+                }
             }
         }
     }
@@ -136,6 +175,34 @@ private fun MessageList(items: List<BubbleItem>, peerName: String, onRetry: (Str
                 status = m.status?.toDeliveryStatus(),
                 onRetry = { onRetry(m.id) },
             )
+        }
+    }
+}
+
+@Composable
+private fun RequestBar(name: String, onAccept: () -> Unit, onDecline: () -> Unit) {
+    Surface(color = MaterialTheme.colorScheme.surfaceContainer, modifier = Modifier.fillMaxWidth()) {
+        Column(
+            Modifier.padding(WhisprTheme.spacing.lg).navigationBarsPadding(),
+            verticalArrangement = Arrangement.spacedBy(WhisprTheme.spacing.sm),
+        ) {
+            Text(
+                stringResource(R.string.chat_request_message, name),
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                TextButton(onClick = onDecline) { Text(stringResource(R.string.chat_request_decline)) }
+                WhisprPrimaryButton(
+                    text = stringResource(R.string.chat_request_accept),
+                    onClick = onAccept,
+                    fillWidth = false,
+                )
+            }
         }
     }
 }

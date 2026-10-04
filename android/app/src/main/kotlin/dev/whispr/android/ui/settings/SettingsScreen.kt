@@ -1,6 +1,7 @@
 package dev.whispr.android.ui.settings
 
 import android.content.ClipData
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,6 +26,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.res.stringResource
@@ -46,13 +48,20 @@ import dev.whispr.core.designsystem.theme.WhisprTheme
 import kotlinx.coroutines.launch
 
 @Composable
-fun SettingsRoute(onBack: () -> Unit, viewModel: SettingsViewModel = hiltViewModel()) {
+fun SettingsRoute(
+    onBack: () -> Unit,
+    onEditProfile: () -> Unit = {},
+    onMyCode: () -> Unit = {},
+    viewModel: SettingsViewModel = hiltViewModel(),
+) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     SettingsScreen(
         state = state,
         onBack = onBack,
         onReadReceipts = viewModel::setReadReceipts,
         onTypingIndicators = viewModel::setTypingIndicators,
+        onEditProfile = onEditProfile,
+        onMyCode = onMyCode,
     )
 }
 
@@ -62,6 +71,8 @@ fun SettingsScreen(
     onBack: () -> Unit,
     onReadReceipts: (Boolean) -> Unit = {},
     onTypingIndicators: (Boolean) -> Unit = {},
+    onEditProfile: () -> Unit = {},
+    onMyCode: () -> Unit = {},
 ) {
     Scaffold(
         containerColor = MaterialTheme.colorScheme.surface,
@@ -77,7 +88,13 @@ fun SettingsScreen(
                     onRetry = onBack,
                     retryLabel = stringResource(R.string.settings_error_action),
                 )
-                is SettingsUiState.Content -> SettingsContent(state, onReadReceipts, onTypingIndicators)
+                is SettingsUiState.Content -> SettingsContent(
+                    state,
+                    onReadReceipts,
+                    onTypingIndicators,
+                    onEditProfile,
+                    onMyCode,
+                )
             }
         }
     }
@@ -88,6 +105,8 @@ private fun SettingsContent(
     state: SettingsUiState.Content,
     onReadReceipts: (Boolean) -> Unit,
     onTypingIndicators: (Boolean) -> Unit,
+    onEditProfile: () -> Unit,
+    onMyCode: () -> Unit,
 ) {
     val clipboard = LocalClipboard.current
     val clipScope = rememberCoroutineScope()
@@ -113,6 +132,10 @@ private fun SettingsContent(
                 },
             )
             Column(Modifier.widthIn(max = WhisprTheme.sizes.contentMaxWidth).padding(top = spacing.xl)) {
+                NavRow(stringResource(R.string.settings_edit_profile), WhisprIcons.Edit, onEditProfile)
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                NavRow(stringResource(R.string.settings_my_code), WhisprIcons.QrCode, onMyCode)
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 SettingRow(stringResource(R.string.settings_connection), connectionText(state.connection))
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -145,6 +168,23 @@ private fun SettingsContent(
                 SettingRow(stringResource(R.string.settings_version), state.version)
             }
         }
+    }
+}
+
+/** A row that opens another screen. */
+@Composable
+private fun NavRow(label: String, icon: ImageVector, onClick: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .heightIn(min = WhisprTheme.sizes.minTouchTarget)
+            .clickable(role = Role.Button, onClick = onClick)
+            .padding(horizontal = WhisprTheme.spacing.lg, vertical = WhisprTheme.spacing.md),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(WhisprTheme.spacing.lg),
+    ) {
+        Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(label, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface)
     }
 }
 

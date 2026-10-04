@@ -93,6 +93,11 @@ dependencies {
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.navigation.compose)
     implementation(libs.androidx.lifecycle.process)
+    // QR scanning: zxing-cpp (open source, on-device, no Google services) on a CameraX preview.
+    implementation(libs.zxing.cpp)
+    implementation(libs.camera.camera2)
+    implementation(libs.camera.lifecycle)
+    implementation(libs.camera.compose)
     implementation(libs.kotlinx.coroutines.play.services)
     implementation(libs.firebase.messaging) {
         // Delivery-metrics telemetry to Google (Firelog). Not needed for
@@ -119,6 +124,7 @@ dependencies {
 
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.zxing.core)
 }
 
 // Screens must take colors, sizes and type from the design system

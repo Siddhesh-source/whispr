@@ -34,6 +34,7 @@ dependencies {
     api(libs.compose.ui.graphics)
     api(libs.compose.ui.tooling.preview)
     debugImplementation(libs.compose.ui.tooling)
+    implementation(libs.zxing.core) // QR rendering only; scanning lives in :app
 
     testImplementation(libs.junit)
     testImplementation(libs.androidx.test.ext.junit)

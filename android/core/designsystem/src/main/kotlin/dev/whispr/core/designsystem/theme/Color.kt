@@ -103,6 +103,9 @@ data class WhisprColors(
     val onBanner: Color,
     /** Background/foreground pairs for initials avatars, chosen by name hash. */
     val avatarPalette: List<Pair<Color, Color>>,
+    /** QR codes are always dark-on-light in both themes, for reliable scanning. */
+    val qrForeground: Color = Color.Black,
+    val qrBackground: Color = Color.White,
 )
 
 internal fun ColorScheme.toWhisprColors() = WhisprColors(

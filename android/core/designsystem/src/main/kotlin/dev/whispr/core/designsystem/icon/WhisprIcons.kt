@@ -25,4 +25,10 @@ object WhisprIcons {
     val PersonAdd: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ic_person_add)
     val Copy: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ic_copy)
     val Unlocked: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ic_lock_open)
+    val QrCode: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ic_qr_code)
+    val QrScanner: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ic_qr_scanner)
+    val Verified: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ic_verified)
+    val Warning: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ic_warning)
+    val Edit: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ic_edit)
+    val Image: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ic_image)
 }

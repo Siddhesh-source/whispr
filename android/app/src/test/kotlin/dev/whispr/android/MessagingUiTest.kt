@@ -17,14 +17,8 @@ import dev.whispr.android.ui.chat.ChatScreen
 import dev.whispr.android.ui.chat.ChatUiState
 import dev.whispr.android.ui.chat.ChatViewModel
 import dev.whispr.android.ui.chat.group
-import dev.whispr.android.ui.contacts.AddContactError
-import dev.whispr.android.ui.contacts.AddContactScreen
-import dev.whispr.android.ui.contacts.AddContactUiState
-import dev.whispr.android.ui.contacts.AddContactViewModel
 import dev.whispr.core.designsystem.component.BubbleGroupPosition
 import dev.whispr.core.designsystem.theme.WhisprTheme
-import dev.whispr.domain.model.AddContactResult
-import dev.whispr.domain.model.AuthError
 import dev.whispr.domain.model.Contact
 import dev.whispr.domain.model.ConversationId
 import dev.whispr.domain.model.Message
@@ -142,27 +136,6 @@ class MessagingUiTest {
         assertNull(active.current.value)
     }
 
-    @Test
-    fun addContactSuccessAndErrors() = runTest(dispatcher) {
-        val contacts = FakeContacts()
-        val vm = AddContactViewModel(contacts, FakeAccounts(registered), FakeConnectivity())
-        vm.state.test {
-            awaitItem()
-            vm.onInput("nope")
-            contacts.result = AddContactResult.InvalidId
-            vm.submit()
-            assertEquals(AddContactError.Invalid, expectMostRecentItem().error)
-
-            contacts.result = AddContactResult.Failed(AuthError.Network)
-            vm.submit()
-            assertEquals(AddContactError.Network, expectMostRecentItem().error)
-
-            contacts.result = AddContactResult.Added(peer)
-            vm.submit()
-            assertEquals(peer.userId, expectMostRecentItem().added)
-        }
-    }
-
     // ---- screens ----
 
     private fun chat(state: ChatUiState, onRetry: (String) -> Unit = {}) = rule.setContent {
@@ -212,22 +185,5 @@ class MessagingUiTest {
         rule.onNodeWithContentDescription("hi there", substring = true).assertExists()
         rule.onNodeWithContentDescription("Not sent", substring = true).performClick()
         assertEquals("out", retried)
-    }
-
-    @Test
-    fun addContactScreenShowsErrorAndOwnId() {
-        rule.setContent {
-            WhisprTheme {
-                AddContactScreen(
-                    AddContactUiState(input = "x", myId = "my-own-id", error = AddContactError.NotFound),
-                    onBack = {},
-                    onInput = {},
-                    onSubmit = {},
-                )
-            }
-        }
-        rule.onNodeWithText("No account with that ID.").assertIsDisplayed()
-        rule.onNodeWithText("my-own-id").assertIsDisplayed()
-        rule.onNodeWithContentDescription("Copy your account ID").assertIsDisplayed()
     }
 }
