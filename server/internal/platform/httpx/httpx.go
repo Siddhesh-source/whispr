@@ -3,6 +3,7 @@
 package httpx
 
 import (
+	"bufio"
 	"encoding/json"
 	"errors"
 	"io"
@@ -81,6 +82,19 @@ func (s *statusWriter) WriteHeader(code int) {
 	s.status = code
 	s.ResponseWriter.WriteHeader(code)
 }
+
+// Hijack lets WebSocket upgrades take over the connection through the logger.
+func (s *statusWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	hj, ok := s.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, errors.New("httpx: underlying ResponseWriter cannot hijack")
+	}
+	s.status = http.StatusSwitchingProtocols
+	return hj.Hijack()
+}
+
+// Unwrap exposes the underlying writer to http.ResponseController.
+func (s *statusWriter) Unwrap() http.ResponseWriter { return s.ResponseWriter }
 
 // RateLimiter is a per-client-IP token bucket. The client IP is taken from
 // the TCP peer address only; X-Forwarded-For is not trusted.

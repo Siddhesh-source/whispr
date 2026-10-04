@@ -1,6 +1,8 @@
 package httpx
 
 import (
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -60,5 +62,22 @@ func TestRateLimiterBlocksAfterBurst(t *testing.T) {
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("other client got %d", rec.Code)
+	}
+}
+
+func TestRequestLoggerSupportsHijack(t *testing.T) {
+	var hijackable bool
+	h := RequestLogger(slog.New(slog.NewTextHandler(io.Discard, nil)))(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, hijackable = w.(http.Hijacker)
+	}))
+	srv := httptest.NewServer(h)
+	defer srv.Close()
+	resp, err := http.Get(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if !hijackable {
+		t.Fatal("logger hides http.Hijacker; WebSocket upgrades would fail")
 	}
 }
