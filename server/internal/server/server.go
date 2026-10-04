@@ -11,6 +11,7 @@ import (
 	"whispr/server/internal/auth"
 	"whispr/server/internal/contacts"
 	"whispr/server/internal/health"
+	"whispr/server/internal/keys"
 	"whispr/server/internal/messaging"
 	"whispr/server/internal/platform/httpx"
 	"whispr/server/internal/profile"
@@ -24,6 +25,7 @@ type Deps struct {
 	RateLimiter *httpx.RateLimiter
 	Messaging   *messaging.Module
 	Contacts    *contacts.Module
+	Keys        *keys.Module
 	Push        *push.Module
 	Profile     *profile.Module
 }
@@ -46,6 +48,7 @@ func NewRouter(d Deps) http.Handler {
 			authHandler.AuthedRoutes(r)
 			d.Messaging.Routes(r)
 			d.Contacts.Routes(r)
+			d.Keys.Routes(r)
 			d.Push.Routes(r)
 			d.Profile.Routes(r)
 		})

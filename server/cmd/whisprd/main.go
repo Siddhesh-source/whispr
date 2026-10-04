@@ -16,6 +16,7 @@ import (
 	"whispr/server/internal/auth"
 	"whispr/server/internal/config"
 	"whispr/server/internal/contacts"
+	"whispr/server/internal/keys"
 	"whispr/server/internal/messaging"
 	"whispr/server/internal/platform/db"
 	"whispr/server/internal/platform/httpx"
@@ -94,6 +95,7 @@ func run() error {
 			RateLimiter: httpx.NewRateLimiter(cfg.RateLimitPerMinute),
 			Messaging:   messaging.New(gateway),
 			Contacts:    contacts.New(authStore, log),
+			Keys:        keys.NewModule(keys.NewPGStore(pool), verifier, log, auth.UserIDFrom, keys.DefaultLimits()),
 			Push:        push.NewModule(pushStore, log, auth.UserIDFrom),
 			// Username lookups get a stricter per-IP limit than other calls.
 			Profile: profile.NewModule(profile.NewStore(pool), log, auth.UserIDFrom, httpx.NewRateLimiter(10).Middleware),

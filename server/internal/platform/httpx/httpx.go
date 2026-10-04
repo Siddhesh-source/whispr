@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
@@ -40,7 +41,13 @@ func WriteError(w http.ResponseWriter, status int, code, msg string) {
 
 // DecodeJSON decodes a single bounded JSON object, rejecting unknown fields.
 func DecodeJSON(w http.ResponseWriter, r *http.Request, dst any) error {
-	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, MaxBodyBytes))
+	return DecodeJSONLimit(w, r, dst, MaxBodyBytes)
+}
+
+// DecodeJSONLimit is DecodeJSON with a caller-chosen body limit, for the few
+// endpoints whose payloads are legitimately larger (prekey uploads).
+func DecodeJSONLimit(w http.ResponseWriter, r *http.Request, dst any, limit int64) error {
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, limit))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {
 		return err
@@ -96,11 +103,13 @@ func (s *statusWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 // Unwrap exposes the underlying writer to http.ResponseController.
 func (s *statusWriter) Unwrap() http.ResponseWriter { return s.ResponseWriter }
 
-// RateLimiter is a per-client-IP token bucket. The client IP is taken from
-// the TCP peer address only; X-Forwarded-For is not trusted.
-type RateLimiter struct {
+// KeyedLimiter is an in-memory token bucket per key: each key may make
+// `burst` requests, refilled evenly over `per`. State is per process.
+type KeyedLimiter struct {
 	mu      sync.Mutex
-	perMin  int
+	burst   int
+	every   time.Duration
+	idle    time.Duration
 	clients map[string]*client
 	now     func() time.Time
 }
@@ -110,29 +119,53 @@ type client struct {
 	lastSeen time.Time
 }
 
-func NewRateLimiter(perMinute int) *RateLimiter {
-	return &RateLimiter{perMin: perMinute, clients: map[string]*client{}, now: time.Now}
+// NewKeyedLimiter allows burst requests per key every per.
+func NewKeyedLimiter(burst int, per time.Duration) *KeyedLimiter {
+	// An entry may only be forgotten once its bucket would have refilled,
+	// or eviction would reset the limit early.
+	idle := max(10*time.Minute, per)
+	return &KeyedLimiter{
+		burst: burst, every: per / time.Duration(burst), idle: idle,
+		clients: map[string]*client{}, now: time.Now,
+	}
 }
 
-func (rl *RateLimiter) allow(ip string) bool {
-	rl.mu.Lock()
-	defer rl.mu.Unlock()
-	now := rl.now()
-	c, ok := rl.clients[ip]
+// Allow reports whether key may make one more request now.
+func (l *KeyedLimiter) Allow(key string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	now := l.now()
+	c, ok := l.clients[key]
 	if !ok {
-		c = &client{lim: rate.NewLimiter(rate.Every(time.Minute/time.Duration(rl.perMin)), rl.perMin)}
-		rl.clients[ip] = c
+		c = &client{lim: rate.NewLimiter(rate.Every(l.every), l.burst)}
+		l.clients[key] = c
 	}
 	c.lastSeen = now
 	// Opportunistic cleanup keeps memory bounded without a goroutine.
-	if len(rl.clients) > 10_000 {
-		for k, v := range rl.clients {
-			if now.Sub(v.lastSeen) > 10*time.Minute {
-				delete(rl.clients, k)
+	if len(l.clients) > 10_000 {
+		for k, v := range l.clients {
+			if now.Sub(v.lastSeen) > l.idle {
+				delete(l.clients, k)
 			}
 		}
 	}
 	return c.lim.AllowN(now, 1)
+}
+
+// RateLimiter is a per-client-IP token bucket. The client IP is taken from
+// the TCP peer address only; X-Forwarded-For is not trusted.
+type RateLimiter struct {
+	keyed *KeyedLimiter
+}
+
+func NewRateLimiter(perMinute int) *RateLimiter {
+	return &RateLimiter{keyed: NewKeyedLimiter(perMinute, time.Minute)}
+}
+
+// WriteRateLimited is the 429 response every limiter uses.
+func WriteRateLimited(w http.ResponseWriter, retryAfter time.Duration) {
+	w.Header().Set("Retry-After", strconv.Itoa(max(1, int(retryAfter.Seconds()))))
+	WriteError(w, http.StatusTooManyRequests, "rate_limited", "too many requests")
 }
 
 func (rl *RateLimiter) Middleware(next http.Handler) http.Handler {
@@ -141,9 +174,8 @@ func (rl *RateLimiter) Middleware(next http.Handler) http.Handler {
 		if err != nil {
 			ip = r.RemoteAddr
 		}
-		if !rl.allow(ip) {
-			w.Header().Set("Retry-After", "60")
-			WriteError(w, http.StatusTooManyRequests, "rate_limited", "too many requests")
+		if !rl.keyed.Allow(ip) {
+			WriteRateLimited(w, time.Minute)
 			return
 		}
 		next.ServeHTTP(w, r)

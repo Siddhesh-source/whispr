@@ -21,6 +21,7 @@ import (
 
 	"whispr/server/internal/auth"
 	"whispr/server/internal/contacts"
+	"whispr/server/internal/keys"
 	"whispr/server/internal/messaging"
 	"whispr/server/internal/platform/dbtest"
 	"whispr/server/internal/platform/httpx"
@@ -75,6 +76,7 @@ func newServer(t *testing.T, pool *pgxpool.Pool, o harnessOpts) *harness {
 	router := server.NewRouter(server.Deps{
 		Log: log, DB: pool, Auth: authSvc, RateLimiter: httpx.NewRateLimiter(1000),
 		Messaging: messaging.New(gw), Contacts: contacts.New(auth.NewPGStore(pool), log),
+		Keys:    keys.NewModule(keys.NewPGStore(pool), sigverifytest.Fake{}, log, auth.UserIDFrom, keys.DefaultLimits()),
 		Push:    push.NewModule(push.NewPGStore(pool), log, auth.UserIDFrom),
 		Profile: profile.NewModule(profile.NewStore(pool), log, auth.UserIDFrom, httpx.NewRateLimiter(1000).Middleware),
 	})

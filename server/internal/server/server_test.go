@@ -12,6 +12,7 @@ import (
 
 	"whispr/server/internal/auth"
 	"whispr/server/internal/contacts"
+	"whispr/server/internal/keys"
 	"whispr/server/internal/messaging"
 	"whispr/server/internal/platform/httpx"
 	"whispr/server/internal/profile"
@@ -33,6 +34,7 @@ func newRouter(rateLimit int) http.Handler {
 		RateLimiter: httpx.NewRateLimiter(rateLimit),
 		Messaging:   messaging.New(messaging.NewGateway(nil, messaging.NewHub(), log, messaging.GatewayOptions{UserID: auth.UserIDFrom})),
 		Contacts:    contacts.New(nil, log),
+		Keys:        keys.NewModule(nil, nil, log, auth.UserIDFrom, keys.DefaultLimits()),
 		Push:        push.NewModule(nil, log, auth.UserIDFrom),
 		Profile:     profile.NewModule(nil, log, auth.UserIDFrom, httpx.NewRateLimiter(10).Middleware),
 	})
