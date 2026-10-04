@@ -8,13 +8,19 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.signal.libsignal.protocol.IdentityKeyPair
 
+/** The identity key pair for libsignal sessions (data layer only; the domain sees public keys and signatures). */
+fun interface IdentityKeyPairSource {
+    suspend fun keyPair(): IdentityKeyPair
+}
+
 /**
  * The libsignal identity key pair, generated on first use and stored wrapped
  * by a Keystore key. Key generation, serialization and signing are all
  * libsignal calls; this class only decides where the bytes live.
  */
 class LibsignalIdentityRepository(private val store: SecretFileStore, private val io: CoroutineDispatcher) :
-    IdentityRepository {
+    IdentityRepository,
+    IdentityKeyPairSource {
 
     private val mutex = Mutex()
 
@@ -30,7 +36,7 @@ class LibsignalIdentityRepository(private val store: SecretFileStore, private va
         keyPair().privateKey.calculateSignature(message)
     }
 
-    private suspend fun keyPair(): IdentityKeyPair {
+    override suspend fun keyPair(): IdentityKeyPair {
         cached?.let { return it }
         return mutex.withLock {
             cached ?: withContext(io) { loadOrCreate() }.also { cached = it }

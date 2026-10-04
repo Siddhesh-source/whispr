@@ -60,10 +60,25 @@ interface AccountDao {
         MessageEntity::class,
         OutboxEntity::class,
         SettingEntity::class,
+        SignalSessionEntity::class,
+        SignalPreKeyEntity::class,
+        SignalSignedPreKeyEntity::class,
+        SignalKyberPreKeyEntity::class,
+        KyberUsedBaseKeyEntity::class,
+        SeenEnvelopeEntity::class,
+        SentEnvelopeEntity::class,
+        PendingResetEntity::class,
+        ParkedRecipientEntity::class,
+        HeldEnvelopeEntity::class,
+        DecryptAttemptEntity::class,
     ],
-    version = 3,
+    version = 4,
     exportSchema = true,
-    autoMigrations = [AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3)],
+    autoMigrations = [
+        AutoMigration(from = 1, to = 2),
+        AutoMigration(from = 2, to = 3),
+        AutoMigration(from = 3, to = 4),
+    ],
 )
 abstract class WhisprDatabase : RoomDatabase() {
     abstract fun accountDao(): AccountDao
@@ -72,6 +87,7 @@ abstract class WhisprDatabase : RoomDatabase() {
     abstract fun outboxDao(): OutboxDao
     abstract fun settingDao(): SettingDao
     abstract fun messagingTransactions(): MessagingTransactions
+    abstract fun cryptoDao(): CryptoDao
 
     companion object {
         const val NAME = "whispr.db"

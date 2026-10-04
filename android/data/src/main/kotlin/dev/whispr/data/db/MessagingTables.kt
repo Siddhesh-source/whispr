@@ -30,14 +30,20 @@ data class ContactEntity(
 /**
  * One row per message. [localOrder] (insertion order) is the display order:
  * incoming messages are inserted in server-sequence order, outgoing ones when
- * the user sends them. The unique index on [messageId] makes redelivered
- * envelopes no-ops, which is what turns at-least-once delivery into
- * exactly-once on screen.
+ * the user sends them. The unique index on ([peerId], [messageId]) makes
+ * redelivered envelopes no-ops, which is what turns at-least-once delivery
+ * into exactly-once on screen. Message IDs are chosen by the sender, so they
+ * are only unique per peer.
+ *
+ * For incoming text, [messageId] is the sender's logical message ID (`mid`),
+ * which a resend keeps. A [placeholder] row stands in for an envelope we
+ * could not decrypt (keyed by its transport ID, which equals the `mid` of a
+ * first send) until it is recovered or given up on.
  */
 @Entity(
     tableName = "messages",
     indices = [
-        Index(value = ["messageId"], unique = true),
+        Index(value = ["peerId", "messageId"], unique = true),
         Index(value = ["conversationId", "localOrder"]),
     ],
 )
@@ -52,7 +58,21 @@ data class MessageEntity(
     /** Outgoing: Sending/Sent/Delivered/Read/Failed. Incoming: null. */
     val status: String?,
     @ColumnInfo(defaultValue = "0") val readByMe: Boolean = false,
+    /** Null for a real message; otherwise a [Placeholder] state name. */
+    val placeholder: String? = null,
 )
+
+/** States of a "couldn't decrypt" stand-in. They only move forward, except that a late resend may still recover an unrecoverable one. */
+enum class Placeholder {
+    /** We asked the sender to resend. */
+    Pending,
+
+    /** Waiting to ask: the sender's lane is blocked (key change or no keys). */
+    Waiting,
+
+    /** Gave up: the sender could not resend it or never answered. */
+    Unrecoverable,
+}
 
 /**
  * Envelopes waiting to be accepted by the server, sent strictly in [seq]
@@ -64,8 +84,14 @@ data class OutboxEntity(
     val messageId: String,
     val conversationId: String,
     val recipientId: String,
+    /** The plaintext Payload (padded and encrypted when sent). */
     val payload: ByteArray,
     val clientTs: Long,
+    /**
+     * The encrypted wire bytes, set once when this entry first reaches the
+     * head of its lane, so resends are byte-identical.
+     */
+    val ciphertext: ByteArray? = null,
 )
 
 @Entity(tableName = "settings")
