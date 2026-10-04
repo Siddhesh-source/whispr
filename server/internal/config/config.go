@@ -17,6 +17,8 @@ type Config struct {
 	// RateLimitPerMinute applies per client IP to unauthenticated auth endpoints.
 	RateLimitPerMinute int
 	LogLevel           string
+	// FCMCredentialsFile is a Firebase service-account JSON key. Empty disables push.
+	FCMCredentialsFile string
 }
 
 // Load reads configuration from the environment. DATABASE_URL is required;
@@ -26,6 +28,7 @@ func Load() (Config, error) {
 		ListenAddr:         getenv("LISTEN_ADDR", ":8080"),
 		DatabaseURL:        os.Getenv("DATABASE_URL"),
 		LogLevel:           getenv("LOG_LEVEL", "info"),
+		FCMCredentialsFile: os.Getenv("FCM_CREDENTIALS_FILE"),
 		TokenTTL:           15 * time.Minute,
 		ChallengeTTL:       60 * time.Second,
 		RateLimitPerMinute: 30,

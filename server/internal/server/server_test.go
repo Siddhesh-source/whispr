@@ -14,6 +14,7 @@ import (
 	"whispr/server/internal/contacts"
 	"whispr/server/internal/messaging"
 	"whispr/server/internal/platform/httpx"
+	"whispr/server/internal/push"
 	"whispr/server/internal/sigverify/sigverifytest"
 )
 
@@ -22,14 +23,16 @@ type okPinger struct{}
 func (okPinger) Ping(context.Context) error { return nil }
 
 func newRouter(rateLimit int) http.Handler {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	svc := auth.NewService(nil, sigverifytest.Fake{}, auth.Options{TokenTTL: time.Minute, ChallengeTTL: time.Minute})
 	return NewRouter(Deps{
-		Log:         slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Log:         log,
 		DB:          okPinger{},
 		Auth:        svc,
 		RateLimiter: httpx.NewRateLimiter(rateLimit),
-		Messaging:   messaging.New(),
-		Contacts:    contacts.New(),
+		Messaging:   messaging.New(messaging.NewGateway(nil, messaging.NewHub(), log, messaging.GatewayOptions{UserID: auth.UserIDFrom})),
+		Contacts:    contacts.New(nil, log),
+		Push:        push.NewModule(nil, log, auth.UserIDFrom),
 	})
 }
 

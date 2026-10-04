@@ -18,6 +18,7 @@ import (
 	"whispr/server/internal/platform/db"
 	"whispr/server/internal/platform/httpx"
 	"whispr/server/internal/platform/logging"
+	"whispr/server/internal/push"
 	"whispr/server/internal/server"
 	"whispr/server/internal/sigverify"
 )
@@ -56,11 +57,30 @@ func run() error {
 		return err
 	}
 
-	authSvc := auth.NewService(auth.NewPGStore(pool), verifier, auth.Options{
+	authStore := auth.NewPGStore(pool)
+	authSvc := auth.NewService(authStore, verifier, auth.Options{
 		TokenTTL:     cfg.TokenTTL,
 		ChallengeTTL: cfg.ChallengeTTL,
 	})
 	go authSvc.RunJanitor(ctx, time.Minute, log)
+
+	pushStore := push.NewPGStore(pool)
+	var waker messaging.Waker = messaging.NoopWaker{}
+	if cfg.FCMCredentialsFile != "" {
+		fcm, err := push.NewFCMWakerFromFile(ctx, pushStore, cfg.FCMCredentialsFile)
+		if err != nil {
+			return err
+		}
+		waker = fcm
+		log.Info("push enabled", "provider", "fcm")
+	} else {
+		log.Warn("push disabled: FCM_CREDENTIALS_FILE not set")
+	}
+
+	hub := messaging.NewHub()
+	msgSvc := messaging.NewService(messaging.NewPGStore(pool), hub, waker, log, messaging.Options{})
+	go msgSvc.RunJanitor(ctx, time.Hour)
+	gateway := messaging.NewGateway(msgSvc, hub, log, messaging.GatewayOptions{UserID: auth.UserIDFrom})
 
 	srv := &http.Server{
 		Addr: cfg.ListenAddr,
@@ -69,8 +89,9 @@ func run() error {
 			DB:          pool,
 			Auth:        authSvc,
 			RateLimiter: httpx.NewRateLimiter(cfg.RateLimitPerMinute),
-			Messaging:   messaging.New(),
-			Contacts:    contacts.New(),
+			Messaging:   messaging.New(gateway),
+			Contacts:    contacts.New(authStore, log),
+			Push:        push.NewModule(pushStore, log, auth.UserIDFrom),
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
