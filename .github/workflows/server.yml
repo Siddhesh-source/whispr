@@ -6,16 +6,40 @@ on:
     paths: ["server/**", "docker-compose.yml", ".github/workflows/server.yml"]
   pull_request:
     paths: ["server/**", "docker-compose.yml", ".github/workflows/server.yml"]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+# One run per branch: a newer push cancels the older run (main keeps every run).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+# Actions are pinned to commit SHAs (tags are mutable); Dependabot keeps them current.
 jobs:
-  lint-and-test:
+  checks:
+    # Static checks share one runner and one Go setup.
     runs-on: ubuntu-latest
-    defaults:
-      run:
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: v2.14.0 # pinned so a new linter release can't break main unannounced
+          working-directory: server
+      - name: govulncheck (known vulnerabilities in reachable code)
         working-directory: server
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
+
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     services:
       postgres:
         image: postgres:17-alpine
@@ -26,39 +50,46 @@ jobs:
         ports: ["5432:5432"]
         options: >-
           --health-cmd "pg_isready -U whispr -d whispr_test"
-          --health-interval 5s --health-timeout 3s --health-retries 10
+          --health-interval 2s --health-timeout 3s --health-retries 30
+    defaults:
+      run:
+        working-directory: server
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: server/go.mod
           cache-dependency-path: server/go.sum
-      - name: golangci-lint
-        uses: golangci/golangci-lint-action@v8
-        with:
-          working-directory: server
-      - name: Unit + Postgres integration tests
+      - name: Unit and Postgres integration tests
         env:
+          # Each test creates and drops its own database here (internal/platform/dbtest),
+          # so packages run in parallel safely.
           WHISPR_TEST_DATABASE_URL: postgres://whispr:whispr@localhost:5432/whispr_test?sslmode=disable
-        run: go test -race -count=1 ./...
+        run: go test -race -shuffle=on -count=1 ./...
 
-  libsignal:
-    # Builds libsignal-ffi and runs the full suite with real signatures
-    # (-tags libsignal), then builds the production image.
+  image:
+    # Builds libsignal-ffi from source, runs the whole suite against real
+    # libsignal (-tags libsignal), then builds the production image. Layers,
+    # including the slow Rust build, are cached in the GitHub Actions cache.
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Validate docker-compose.yml
+        run: docker compose config --quiet
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: Tests with real libsignal
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: server
           target: test
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          push: false
+          cache-from: type=gha,scope=server
+          cache-to: type=gha,scope=server,mode=max
       - name: Production image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: server
           push: false
-          cache-from: type=gha
+          cache-from: type=gha,scope=server
+          cache-to: type=gha,scope=server,mode=max

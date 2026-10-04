@@ -6,76 +6,129 @@ on:
     paths: ["android/**", ".github/workflows/android.yml"]
   pull_request:
     paths: ["android/**", ".github/workflows/android.yml"]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+# One run per branch: a newer push cancels the older run (main keeps every run).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  # One JDK (21) runs Gradle, compiles (to Java 17 bytecode) and runs the tests
+  # (libsignal needs 21). Toolchain downloads are disabled so a misconfiguration
+  # fails fast instead of silently downloading a JDK every run. --continue
+  # reports every failing check in one run instead of stopping at the first.
+  GRADLE_FLAGS: --continue -Porg.gradle.java.installations.auto-download=false
+
+# Actions are pinned to commit SHAs (tags are mutable); Dependabot keeps them current.
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: android
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
         with:
           distribution: temurin
-          # 17 runs Gradle; 21 runs JVM unit tests (libsignal targets Java 21).
-          java-version: |
-            21
-            17
-      - uses: gradle/actions/setup-gradle@v4
-      - uses: gradle/actions/wrapper-validation@v4
-      - name: Lint (ktlint + Android Lint)
-        run: ./gradlew ktlintCheck lintDebug
-      - name: Design-token check
-        run: ./gradlew :app:checkDesignTokens
-      - name: Unit, accessibility and contrast tests
-        run: ./gradlew testDebugUnitTest :domain:test
-      - name: Assemble
-        run: ./gradlew assembleDebug
-      # Screenshots render differently across OSes (fonts, AA), so CI records
-      # them for review instead of diffing against Windows-recorded goldens.
-      - name: Record screenshots
-        run: ./gradlew :core:designsystem:recordRoborazziDebug
-      - uses: actions/upload-artifact@v4
+          java-version: 21
+      # Also validates the Gradle wrapper checksum (validate-wrappers defaults to true).
+      # Only main writes the cache, so branches can't evict or poison it.
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
         with:
-          name: design-system-screenshots
-          path: android/core/designsystem/screenshots/
-      - uses: actions/upload-artifact@v4
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+      - name: Cache Robolectric Android jars
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.m2/repository/org/robolectric
+          key: robolectric-${{ hashFiles('android/gradle/libs.versions.toml') }}
+          restore-keys: robolectric-
+      # One Gradle invocation: configuration happens once and tasks run in parallel.
+      # :app:lintDebug covers the libraries too (checkDependencies = true).
+      # Screenshot tests are excluded here; see design-screenshots.yml.
+      - name: Lint, test and assemble
+        run: >-
+          ./gradlew $GRADLE_FLAGS
+          ktlintCheck :app:lintDebug :app:checkDesignTokens
+          testDebugUnitTest :domain:test
+          assembleDebug
+      - name: Upload reports
         if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: reports
-          path: android/**/build/reports/
+          path: |
+            android/**/build/reports/
+            android/**/build/test-results/
+          retention-days: 14
 
   instrumented:
-    # On-device tests: AndroidKeyStore wrapping, identity persistence, and
-    # SQLCipher encryption (none of which exist on the JVM).
+    # On-device tests: AndroidKeyStore wrapping, identity persistence, SQLCipher
+    # encryption, and the native QR decoder (none of which exist on the JVM).
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 40
+    env:
+      API_LEVEL: 35
     defaults:
       run:
         working-directory: android
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
         with:
           distribution: temurin
-          java-version: |
-            21
-            17
-      - uses: gradle/actions/setup-gradle@v4
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
-      - name: Instrumented tests
-        uses: reactivecircus/android-emulator-runner@v2
+      # Build everything before the emulator starts, so emulator time is test time.
+      - name: Build test APKs
+        run: ./gradlew $GRADLE_FLAGS :app:assembleDebug :app:assembleDebugAndroidTest :data:assembleDebugAndroidTest
+      - name: Cache AVD snapshot
+        id: avd-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          api-level: 35
+          path: |
+            ~/.android/avd/*
+            ~/.android/adb*
+          key: avd-${{ env.API_LEVEL }}-default-x86_64
+      - name: Create AVD and snapshot
+        if: steps.avd-cache.outputs.cache-hit != 'true'
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        with:
+          api-level: ${{ env.API_LEVEL }}
           arch: x86_64
-          target: google_apis
+          target: default # AOSP image: smaller and faster to boot; no Google APIs needed
+          force-avd-creation: false
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          disable-animations: false
           working-directory: android
-          script: ./gradlew :data:connectedDebugAndroidTest
+          script: echo "Generated AVD snapshot for caching."
+      - name: Instrumented tests
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        with:
+          api-level: ${{ env.API_LEVEL }}
+          arch: x86_64
+          target: default
+          force-avd-creation: false
+          emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          disable-animations: true
+          working-directory: android
+          script: ./gradlew $GRADLE_FLAGS :data:connectedDebugAndroidTest :app:connectedDebugAndroidTest
+      - name: Upload reports
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: instrumented-reports
+          path: android/**/build/reports/androidTests/
+          retention-days: 14

@@ -1,0 +1,26 @@
+# Weekly dependency updates, grouped to keep PR noise low. Security updates
+# are raised immediately regardless of this schedule.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly }
+    groups:
+      actions: { patterns: ["*"] }
+
+  - package-ecosystem: gomod
+    directory: /server
+    schedule: { interval: weekly }
+    groups:
+      go: { patterns: ["*"] }
+
+  - package-ecosystem: docker
+    directory: /server
+    schedule: { interval: weekly }
+
+  - package-ecosystem: gradle
+    directory: /android
+    schedule: { interval: weekly }
+    groups:
+      androidx: { patterns: ["androidx.*"] }
+      kotlin: { patterns: ["org.jetbrains.kotlin*", "com.google.devtools.ksp*"] }

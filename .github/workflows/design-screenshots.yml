@@ -1,0 +1,49 @@
+name: design-screenshots
+
+# Renders the design system to PNGs for human review. These are not
+# regression tests (there are no golden images), so they only run when the
+# design system changes, or on demand, instead of on every Android push.
+on:
+  pull_request:
+    paths: ["android/core/designsystem/**", ".github/workflows/design-screenshots.yml"]
+  push:
+    branches: [main]
+    paths: ["android/core/designsystem/**", ".github/workflows/design-screenshots.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  screenshots:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+      - name: Cache Robolectric Android jars
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.m2/repository/org/robolectric
+          key: robolectric-${{ hashFiles('android/gradle/libs.versions.toml') }}
+          restore-keys: robolectric-
+      - name: Record screenshots
+        run: ./gradlew -Porg.gradle.java.installations.auto-download=false :core:designsystem:recordRoborazziDebug
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: design-system-screenshots
+          path: android/core/designsystem/screenshots/
+          retention-days: 14
