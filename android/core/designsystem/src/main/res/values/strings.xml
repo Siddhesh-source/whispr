@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Strings used by design-system components. Prefixed ds_ to avoid clashes. -->
+    <string name="ds_navigate_back">Navigate back</string>
+    <string name="ds_send_message">Send message</string>
+    <string name="ds_input_placeholder">Message</string>
+    <string name="ds_input_label">Message text</string>
+    <string name="ds_loading">Loading</string>
+    <string name="ds_retry">Try again</string>
+    <string name="ds_offline_banner">You\'re offline. Messages will send when you reconnect.</string>
+    <string name="ds_open_chat">Open chat</string>
+
+    <string name="ds_bubble_outgoing">You, %1$s: %2$s</string>
+    <string name="ds_bubble_incoming">%1$s: %2$s</string>
+    <string name="ds_status_sending">Sending</string>
+    <string name="ds_status_sent">Sent</string>
+    <string name="ds_status_delivered">Delivered</string>
+    <string name="ds_status_read">Read</string>
+    <string name="ds_status_failed">Not sent</string>
+    <string name="ds_retry_send">Retry sending</string>
+
+    <string name="ds_chat_row_description">%1$s. %2$s. Last message: %3$s. %4$s</string>
+    <string name="ds_chat_row_no_unread">No unread messages</string>
+    <plurals name="ds_unread_messages">
+        <item quantity="one">%d unread message</item>
+        <item quantity="other">%d unread messages</item>
+    </plurals>
+    <string name="ds_unread_overflow">99+</string>
+</resources>

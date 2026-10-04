@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Launcher icon only (matches theme primary #1D6586). UI colors live in the Compose theme. -->
+    <color name="ic_launcher_background">#FF1D6586</color>
+</resources>

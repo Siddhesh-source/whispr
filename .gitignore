@@ -1,0 +1,28 @@
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Android / Gradle
+android/.gradle/
+android/build/
+android/**/build/
+android/local.properties
+android/captures/
+android/.kotlin/
+*.apk
+*.aab
+*.keystore
+*.jks
+
+# Go
+server/whisprd
+server/*.test
+server/coverage.out
+
+# Env
+.env

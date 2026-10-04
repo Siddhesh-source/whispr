@@ -1,0 +1,56 @@
+# Local development backend. Start everything with:
+#   docker compose up --build
+# Credentials below are for local development only. Ports bind to 127.0.0.1.
+name: whispr
+
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: whispr
+      POSTGRES_PASSWORD: whispr-dev-only
+      POSTGRES_DB: whispr
+    ports: ["127.0.0.1:5432:5432"]
+    volumes: [db-data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U whispr -d whispr"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # MinIO stopped publishing official container images in late 2025. These
+  # Chainguard images are free builds of the same open-source MinIO; they are
+  # distroless (no shell), hence no in-container healthcheck.
+  minio:
+    image: cgr.dev/chainguard/minio:latest
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: whispr
+      MINIO_ROOT_PASSWORD: whispr-dev-only
+    ports: ["127.0.0.1:9000:9000", "127.0.0.1:9001:9001"]
+    volumes: [minio-data:/data]
+
+  # Creates the private bucket for encrypted media blobs (used from Phase 3).
+  # Buckets are private by default. Retries until MinIO accepts connections.
+  minio-init:
+    image: cgr.dev/chainguard/minio-client:latest
+    depends_on: [minio]
+    environment:
+      MC_HOST_local: http://whispr:whispr-dev-only@minio:9000
+    command: ["mb", "--ignore-existing", "local/whispr-media"]
+    restart: on-failure
+
+  server:
+    build: ./server
+    environment:
+      DATABASE_URL: postgres://whispr:whispr-dev-only@db:5432/whispr?sslmode=disable
+      LISTEN_ADDR: ":8080"
+      LOG_LEVEL: info
+    ports: ["127.0.0.1:8080:8080"]
+    depends_on:
+      db: { condition: service_healthy }
+      minio-init: { condition: service_completed_successfully }
+
+volumes:
+  db-data:
+  minio-data:
