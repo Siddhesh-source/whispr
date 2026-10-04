@@ -9,6 +9,7 @@ package dbtest
 
 import (
 	"context"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -28,17 +29,21 @@ const EnvVar = "WHISPR_TEST_DATABASE_URL"
 func URL(t testing.TB) string {
 	t.Helper()
 	base := lookup(t)
-	cfg, err := pgx.ParseConfig(base)
-	if err != nil {
-		t.Fatalf("dbtest: parse %s: %v", EnvVar, err)
+	// Rewrite the URL's path. pgx's ConnConfig.ConnString() returns the
+	// original string unchanged, so editing cfg.Database would silently
+	// point every test at the shared base database.
+	u, err := url.Parse(base)
+	if err != nil || (u.Scheme != "postgres" && u.Scheme != "postgresql") {
+		t.Fatalf("dbtest: %s must be a postgres:// URL", EnvVar)
 	}
 	name := "whispr_t_" + strings.ReplaceAll(uuid.NewString(), "-", "")[:20]
 	admin(t, base, "CREATE DATABASE "+pgx.Identifier{name}.Sanitize())
 	t.Cleanup(func() {
 		admin(t, base, "DROP DATABASE IF EXISTS "+pgx.Identifier{name}.Sanitize()+" WITH (FORCE)")
 	})
-	cfg.Database = name
-	return cfg.ConnString()
+	u.Path = "/" + name
+	u.RawPath = ""
+	return u.String()
 }
 
 // New returns a pool connected to a fresh, fully migrated database. The pool
