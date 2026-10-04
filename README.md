@@ -63,6 +63,30 @@ On-device tests (Keystore, SQLCipher) and the live end-to-end test:
 WHISPR_SERVER_URL=http://127.0.0.1:8080/ ./gradlew :data:testDebugUnitTest
 ```
 
+### Chatting between two devices
+
+Install the debug app on two emulators or phones, run `adb -s <device> reverse
+tcp:8080 tcp:8080` for each, and onboard both. On one, tap **New chat** and paste
+the other's account ID (Settings → Account ID, or shown on the New chat screen).
+
+### Push (optional)
+
+Without Firebase configuration everything works while the app is open, and
+queued messages arrive when it next opens. To enable content-free wake-ups:
+
+1. Create a Firebase project and add an Android app with package `dev.whispr.android`.
+2. Create `android/firebase.properties` (git-ignored) from the values in the
+   downloaded `google-services.json`:
+   ```properties
+   app_id=1:1234567890:android:abcdef
+   api_key=AIza...
+   project_id=your-project
+   sender_id=1234567890
+   ```
+3. Create a service-account key with the "Firebase Cloud Messaging API Admin"
+   role, save it outside the repo, and start the server with
+   `FCM_CREDENTIALS_FILE=/path/to/key.json` (e.g. as a mounted secret in compose).
+
 ## Docs
 
 - [Architecture](docs/ARCHITECTURE.md): layers, auth protocol, storage, testing

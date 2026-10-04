@@ -1,7 +1,7 @@
 # Whispr architecture
 
-Status: first draft (Phase 1: identity, authentication, app shell). It
-describes what exists today and marks what is planned.
+Status: draft through Phase 2 (identity, authentication, app shell, 1:1
+messaging). It describes what exists today and marks what is planned.
 
 ## Goals and non-negotiables
 
@@ -26,8 +26,9 @@ android/                 Kotlin, Jetpack Compose
 server/                  Go service
   cmd/whisprd/           Entry point
   internal/auth/         Registration, challenge-response, tokens
-  internal/messaging/    (Phase 2+) opaque envelope relay
-  internal/contacts/     (Phase 2+) QR contact lookup
+  internal/messaging/    WebSocket gateway, opaque envelope store and relay
+  internal/contacts/     User lookup for adding contacts (by ID now, QR in Phase 3)
+  internal/push/         Push token registration, content-free FCM wake-ups
   internal/sigverify/    libsignal signature verification via cgo (libsignal-ffi)
   internal/platform/     db, httpx, logging
   migrations/            SQL migrations (embedded, applied at startup)
@@ -202,12 +203,97 @@ is allowed only in the debug network security config, and only for loopback.
 | App              | ViewModels and `SessionKeeper` with fakes; every screen state with Compose tests |
 | Design system    | Contrast (WCAG AA) for every pairing, accessibility semantics, Roborazzi screenshots |
 
+## Messaging (Phase 2)
+
+### Envelope
+
+| Field | Set by | Server use |
+|---|---|---|
+| `id` (message ID, UUID) | sender | dedup key with the sender |
+| `conversation_id` | sender | opaque; returned to the recipient |
+| `sender_id` | **server**, from the authenticated connection | routing, receipts |
+| `recipient_id` | sender | routing |
+| `client_ts` / `server_ts` | sender / server | display / retention |
+| `seq` | server | per-recipient delivery order |
+| `payload` (≤ 64 KiB) | sender | **never parsed or logged** |
+
+The payload is the only place message semantics live: `{"t":"text","body":…}`,
+`{"t":"read","ids":[…]}`, `{"t":"typing"}`. Phase 4 encrypts these bytes with
+libsignal; the server and schema do not change.
+
+### Protocol (WebSocket `/v1/ws`, bearer token in the upgrade request)
+
+```
+sender                               server                                recipient
+  │ send{id, conv, to, payload} ───▶ │ lock(recipient); dedup(sender,id);
+  │                                  │ INSERT envelope (seq)  ── committed ──
+  │ ◀── accepted{id, seq}  ("Sent")  │ wake recipient's connection, or push
+  │                                  │ envelope{seq, …} ──────────────────────▶ │ store in DB (unique id)
+  │                                  │ ◀────────────────────────────── ack{seq} │ only after commit
+  │                                  │ DELETE envelope; queue "delivered" receipt
+  │ ◀── envelope{kind:delivered, ref_id} ("Delivered")
+```
+
+- **Exactly once** = at-least-once delivery + idempotence on both sides. The server
+  keeps a tombstone `(sender, message_id)` for 30 days, so retries are re-acked
+  without storing twice. The device ignores message IDs it already has. Envelopes
+  are deleted only after the recipient acknowledges them, and the app
+  acknowledges only after the database write commits.
+- **Order:** inserts for one recipient are serialized with a transaction-scoped
+  advisory lock, so sequence order equals commit order. Each connection streams
+  envelopes by `seq > cursor` from Postgres, so backlog and live delivery share
+  one ordered path. The app sends its outbox one envelope at a time.
+- **Server restart:** "Sent" means committed to Postgres. Only presence (who is
+  connected) is in memory; clients reconnect and drain.
+- **Heartbeat:** the server pings every 25 s (10 s timeout) and the client every
+  20 s. A dead peer is marked offline *before* the close handshake, so new
+  messages trigger a push instead of waiting on a ghost connection.
+- **Transient frames** (typing) are delivered only to a live connection and
+  never stored or queued.
+- **Limits:** 20 sends/s per connection (burst 40); rejected with `rate_limited`
+  and retried by the client.
+- **Retention:** undelivered envelopes and dedup tombstones are purged after 30 days.
+
+### Android
+
+- **Single source of truth:** screens observe Room. Sending writes the message
+  (status Sending) and an outbox row in one transaction; `MessagingEngine`
+  reconciles with the server in the background.
+- **When connected:** registered, online, and either in the foreground, holding
+  unsent outbox rows, or within 30 s of a push wake-up. Reconnects use
+  exponential backoff (1 s up to 30 s, ±20 % jitter). A 401 at the upgrade
+  invalidates the token, forcing a fresh challenge-response.
+- **Statuses:** Sending → Sent (accepted) → Delivered (server receipt) → Read
+  (peer's read receipt, if both sides enabled them). Permanent rejections become
+  Failed and can be retried from the bubble.
+- **Conversation IDs** for 1:1 chats are derived on the device from the two user
+  IDs. Incoming messages are filed under the derived ID, never the client-supplied
+  one, so a sender cannot inject messages into another conversation.
+- **Privacy settings:** read receipts and typing indicators are off by default and
+  reciprocal (off means you neither send nor see them).
+- **Push:** FCM data message `{"t":"wake"}` only. The app connects, fetches,
+  stores, and posts a local notification (lock screen shows only "New message").
+  Firebase is initialized from build-config values; without them, push is off.
+  Firebase's delivery-metrics transport is excluded from the build.
+- **Contacts (temporary):** add by pasting an account ID; the server returns the
+  display name and identity key. Replaced by QR in Phase 3.
+
+### Testing (Phase 2)
+
+| Where | What |
+|---|---|
+| Server integration (real Postgres + WebSockets) | real-time delivery and receipts; offline queue exactly once in order; redelivery of unacked; duplicate sends (before and after delivery); server restart; concurrent senders never skip; transient not stored; rejections; replacing connections; heartbeat drops dead peers; sockets survive server timeouts; contact lookup |
+| Android engine (scripted gateway) | ordered one-in-flight outbox; offline queue; resend after reconnect; store-before-ack and dedup; incoming order; conversation spoofing; receipts; reciprocal read; rejections; rate limits; unknown senders; typing; token invalidation |
+| Live (real server, two clients) | offline burst exactly once in order; delivered statuses; real time both ways; restart without duplicates |
+| Two emulators (manual run, 2026-10-04) | real-time chat; network loss and process kill on the recipient; queue counts verified in Postgres |
+
 ## Planned next (not built)
 
 - Contacts by QR: the QR code carries user ID and identity key; scanning
   verifies the key out of band (protects against a malicious server
   substituting keys).
-- Messaging: libsignal sessions (X3DH/PQXDH and Double Ratchet via libsignal),
-  prekey upload, an opaque envelope relay over WebSocket, deletion after delivery.
+- Encryption (Phase 4): libsignal sessions (PQXDH and Double Ratchet via
+  libsignal) and prekey upload. Envelope payloads become ciphertext; nothing on
+  the server changes.
 - Encrypted media in S3/MinIO: encrypted client-side, server stores opaque blobs.
 - Encrypted profiles (replaces the plaintext display name on the server).

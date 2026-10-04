@@ -1,16 +1,16 @@
 # Whispr threat model
 
-Status: first draft, covering Phase 1 (identity, registration, sign-in, local
-storage). Messaging, contacts and media get their own sections as they are
-built. "Gap" marks a known weakness we have accepted for now, each with a plan.
+Status: draft covering Phase 1 (identity, registration, sign-in, local
+storage) and Phase 2 (1:1 messaging, temporary contacts, push). Media gets its
+own section when built. "Gap" marks a known weakness we have accepted for now, each with a plan.
 
 ## Assets
 
 | Asset | Where it lives | Why it matters |
 |-------|----------------|----------------|
 | Identity private key | Device only: wrapped by AndroidKeyStore, in app memory while running | Whoever holds it *is* the user: can sign in and, later, impersonate them to contacts |
-| Message plaintext (future) | Devices only | Confidentiality of conversations |
-| Local database | Device: SQLCipher, key wrapped by Keystore | Profile now; messages and contacts later |
+| Message content | Devices; **server too during Phase 2** (plaintext payloads) | Confidentiality of conversations |
+| Local database | Device: SQLCipher, key wrapped by Keystore | Profile, contacts, messages, outbox |
 | Session token | App memory and server (hash only) | Short-lived API access |
 | Metadata | Server | Who uses the service, when, and (later) who talks to whom |
 | Avatar | Device only | Personal image; may contain location in EXIF |
@@ -126,6 +126,39 @@ encryption protects content even from a server or network that defeats TLS.
 | Tampered libsignal | Built from a pinned tag (`v0.104.0`) from source on the server; Android uses Signal's official Maven artifacts at a pinned version | Partial: pin the tag's commit hash and enable Gradle dependency verification |
 | Mutable container tags | Postgres pinned by major version; Chainguard MinIO images only offer `:latest` | **Gap**: pin by digest |
 
+## Phase 2: messaging, contacts, push
+
+### What the server learns
+
+| Data | Stored? | Notes |
+|---|---|---|
+| **Message content** | **Yes, plaintext, until delivered** | **Phase 2 gap, by design of the brief.** Payloads are opaque to server *code* (never parsed or logged), but the operator or a DB thief can read undelivered messages. The app shows a "not end-to-end encrypted yet" notice in every chat. Phase 4 encrypts payloads with libsignal with no server change. |
+| Who messages whom, and when | Yes, until delivery (envelope rows) | Sender, recipient, conversation ID, timestamps, size. Deleted on acknowledgement or after 30 days. **Gap**: sealed sender to be evaluated in Phase 4. |
+| Dedup tombstones `(sender, message_id, time)` | Yes, 30 days | Needed for exactly-once; reveals sending activity, not recipients. |
+| Delivery receipts | Yes, until delivered | The server knows delivery happened anyway. |
+| Read receipts | As opaque envelopes | Off by default. Plaintext in Phase 2; encrypted in Phase 4. |
+| Typing indicators | Never stored | Off by default; relayed to live connections only. |
+| Online presence | In memory only | Which users are connected right now; never persisted or logged. |
+| Push token | Yes (one per account) | FCM token; deleted when FCM reports it unregistered. |
+
+### Threats and mitigations
+
+| Threat | Mitigation | Status |
+|---|---|---|
+| Sender spoofing | Sender ID always comes from the authenticated connection, never from the frame | Done, tested |
+| Message injected into another conversation | 1:1 conversation ID derived on the device from the two user IDs; client-supplied ID ignored for incoming | Done, tested |
+| Replay or duplicate delivery | Server dedup tombstones; device unique message IDs; ack only after the database commit | Done, tested (server and device) |
+| Message loss on crash or restart | "Sent" means committed in Postgres; outbox persisted on device; envelope deleted only after ack | Done, tested (incl. server restart, killed recipient) |
+| Reordering | Per-recipient advisory lock and sequence-ordered streaming; one-in-flight outbox | Done, tested (concurrent senders) |
+| Flooding a recipient or the server | 20 sends/s per connection, 64 KiB payload cap, 30-day retention | Partial: per-connection only; no per-recipient quota yet |
+| Ghost connections hiding offline users | Heartbeat; offline marked before the close handshake | Done, tested |
+| Push revealing content | Data-only `{"t":"wake"}`; no content, sender, or conversation | Done, tested |
+| Push metadata to Google | FCM learns wake-up timing per device; Firebase Installations issues an ID. Delivery-metrics telemetry (datatransport) excluded from the build | Accepted; UnifiedPush can be added behind the same interface |
+| Notification content on the lock screen | VISIBILITY_PRIVATE with a public "New message" version | Done |
+| Activity metadata (read, typing) | Off by default and reciprocal; typing never stored | Done |
+| Contact key substitution by the server | Phase 2 trusts the server's identity key for an added ID | **Gap until Phase 3** (QR carries the key for out-of-band verification) |
+| Unknown sender spam | Anyone with your ID can message you; the sender's profile is fetched and shown | **Gap**: message requests or blocking to be added |
+
 ## Accepted Phase-1 limitations (summary)
 
 1. Display names are stored in plaintext on the server.
@@ -134,6 +167,8 @@ encryption protects content even from a server or network that defeats TLS.
 3. No app lock, no screen-security flag, no incognito keyboard flag yet.
 4. Spam resistance is weak (IP rate limit only).
 5. No production TLS endpoint or certificate pinning yet.
+6. Phase 2 only: message payloads are plaintext on the server until delivered,
+   and contact keys are trusted from the server (fixed in Phases 4 and 3).
 
 ## Review triggers
 
