@@ -180,7 +180,7 @@ func TestChallengeUnknownUser(t *testing.T) {
 
 func TestValidateDisplayName(t *testing.T) {
 	valid := []string{"Ada", "José", "李小龍", "🙂 Sam", strings.Repeat("a", 64)}
-	invalid := []string{"", " Ada", "Ada ", "A\nB", "A\x00B", "evil‮gnp.exe", strings.Repeat("a", 65), "\xff"}
+	invalid := []string{"", " Ada", "Ada ", "A\nB", "A\x00B", "evil\u202egnp.exe", strings.Repeat("a", 65), "\xff"}
 	for _, n := range valid {
 		if err := ValidateDisplayName(n); err != nil {
 			t.Errorf("%q rejected", n)

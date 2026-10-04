@@ -214,7 +214,7 @@ func (m *Module) lookup(w http.ResponseWriter, r *http.Request) {
 }
 
 func toResponse(p Profile) profileResponse {
-	return profileResponse{UserID: p.UserID, DisplayName: p.DisplayName, IdentityKey: p.IdentityKey, Username: p.Username}
+	return profileResponse(p)
 }
 
 func (m *Module) internal(w http.ResponseWriter, err error) {

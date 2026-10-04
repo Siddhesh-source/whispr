@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"regexp"
 	"testing"
 	"time"
@@ -18,7 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"whispr/server/internal/auth"
-	"whispr/server/internal/platform/db"
+	"whispr/server/internal/platform/dbtest"
 	"whispr/server/internal/platform/httpx"
 	"whispr/server/internal/profile"
 	"whispr/server/internal/sigverify/sigverifytest"
@@ -26,22 +25,7 @@ import (
 
 func setup(t *testing.T, lookupLimit int) (*httptest.Server, *auth.Service, *pgxpool.Pool) {
 	t.Helper()
-	url := os.Getenv("WHISPR_TEST_DATABASE_URL")
-	if url == "" {
-		t.Skip("WHISPR_TEST_DATABASE_URL not set")
-	}
-	ctx := context.Background()
-	pool, err := db.Open(ctx, url)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(pool.Close)
-	if err := db.Migrate(pool); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `TRUNCATE users CASCADE`); err != nil {
-		t.Fatal(err)
-	}
+	pool := dbtest.New(t)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	svc := auth.NewService(auth.NewPGStore(pool), sigverifytest.Fake{}, auth.Options{TokenTTL: time.Hour, ChallengeTTL: time.Minute})
 	mod := profile.NewModule(profile.NewStore(pool), log, auth.UserIDFrom, httpx.NewRateLimiter(lookupLimit).Middleware)
@@ -84,7 +68,7 @@ func call(t *testing.T, srv *httptest.Server, token, method, path string, body a
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var out map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&out)
 	return resp.StatusCode, out
@@ -162,7 +146,7 @@ func TestDisplayNameUpdate(t *testing.T) {
 	if body["display_name"] != "Alice W." {
 		t.Fatalf("profile %v", body)
 	}
-	if code, _ := call(t, srv, tok, http.MethodPut, "/v1/me/profile", map[string]string{"display_name": "evil‮gnp"}); code != http.StatusBadRequest {
+	if code, _ := call(t, srv, tok, http.MethodPut, "/v1/me/profile", map[string]string{"display_name": "evil\u202egnp"}); code != http.StatusBadRequest {
 		t.Fatalf("bidi name accepted: %d", code)
 	}
 }

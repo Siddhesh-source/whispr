@@ -35,7 +35,7 @@ func Migrate(pool *pgxpool.Pool) error {
 		return fmt.Errorf("load migrations: %w", err)
 	}
 	sqlDB := stdlib.OpenDBFromPool(pool)
-	defer sqlDB.Close()
+	defer func() { _ = sqlDB.Close() }()
 
 	driver, err := pgx.WithInstance(sqlDB, &pgx.Config{})
 	if err != nil {
@@ -48,7 +48,7 @@ func Migrate(pool *pgxpool.Pool) error {
 	}
 	// Close releases the connection the driver holds; without it the pool's
 	// Close blocks forever waiting for that connection to be returned.
-	defer m.Close()
+	defer func() { _, _ = m.Close() }()
 	if err := m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
 		return fmt.Errorf("apply migrations: %w", err)
 	}

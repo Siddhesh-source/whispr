@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -23,7 +22,7 @@ import (
 	"whispr/server/internal/auth"
 	"whispr/server/internal/contacts"
 	"whispr/server/internal/messaging"
-	"whispr/server/internal/platform/db"
+	"whispr/server/internal/platform/dbtest"
 	"whispr/server/internal/platform/httpx"
 	"whispr/server/internal/profile"
 	"whispr/server/internal/push"
@@ -32,28 +31,11 @@ import (
 )
 
 // Integration tests: real Postgres, real WebSockets, the full router with
-// auth middleware. Run with WHISPR_TEST_DATABASE_URL set.
+// auth middleware. Each test gets its own database; run with
+// WHISPR_TEST_DATABASE_URL set.
 
-func testPool(t *testing.T) *pgxpool.Pool {
-	t.Helper()
-	url := os.Getenv("WHISPR_TEST_DATABASE_URL")
-	if url == "" {
-		t.Skip("WHISPR_TEST_DATABASE_URL not set")
-	}
-	ctx := context.Background()
-	pool, err := db.Open(ctx, url)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(pool.Close)
-	if err := db.Migrate(pool); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `TRUNCATE users CASCADE`); err != nil {
-		t.Fatal(err)
-	}
-	return pool
-}
+// testPool returns a fresh, migrated database for this test.
+func testPool(t *testing.T) *pgxpool.Pool { return dbtest.New(t) }
 
 type countingWaker struct{ n atomic.Int32 }
 
@@ -160,7 +142,7 @@ func (h *harness) tryDial(token string) (*client, error) {
 		HTTPHeader: http.Header{"Authorization": {"Bearer " + token}},
 	})
 	if resp != nil && resp.Body != nil {
-		resp.Body.Close()
+		_ = resp.Body.Close()
 	}
 	if err != nil {
 		return nil, err
@@ -434,7 +416,9 @@ func TestConcurrentSendersNeverSkipEnvelopes(t *testing.T) {
 		}
 		seen[text] = true
 		var s, i int
-		fmt.Sscanf(text, "%d-%d", &s, &i)
+		if _, err := fmt.Sscanf(text, "%d-%d", &s, &i); err != nil {
+			t.Fatalf("unexpected payload %q", text)
+		}
 		key := env["sender_id"].(string)
 		if prev, ok := lastPerSender[key]; ok && i != prev+1 {
 			t.Fatalf("per-conversation order broken for sender %d: %d after %d", s, i, prev)
@@ -518,7 +502,7 @@ func TestHeartbeatDropsDeadPeers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer dead.CloseNow()
+	defer func() { _ = dead.CloseNow() }()
 	time.Sleep(500 * time.Millisecond)
 
 	// Bob must now be treated as offline: a message triggers a push.
@@ -547,7 +531,7 @@ func TestContactLookup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var body map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&body)
 	if resp.StatusCode != 200 || body["display_name"] != "Bob" || body["identity_key"] == nil {
@@ -557,7 +541,7 @@ func TestContactLookup(t *testing.T) {
 	req, _ = http.NewRequest(http.MethodGet, h.srv.URL+"/v1/users/"+uuid.NewString(), nil)
 	req.Header.Set("Authorization", "Bearer "+alice.token)
 	resp2, _ := http.DefaultClient.Do(req)
-	resp2.Body.Close()
+	_ = resp2.Body.Close()
 	if resp2.StatusCode != http.StatusNotFound {
 		t.Fatalf("unknown user: %d", resp2.StatusCode)
 	}

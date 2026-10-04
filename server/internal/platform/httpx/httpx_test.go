@@ -76,7 +76,7 @@ func TestRequestLoggerSupportsHijack(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if !hijackable {
 		t.Fatal("logger hides http.Hijacker; WebSocket upgrades would fail")
 	}

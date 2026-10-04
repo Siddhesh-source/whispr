@@ -26,7 +26,8 @@ type FCMWaker struct {
 
 // NewFCMWakerFromFile loads a Firebase service-account JSON key.
 func NewFCMWakerFromFile(ctx context.Context, store Store, path string) (*FCMWaker, error) {
-	data, err := os.ReadFile(path)
+	// The path is operator configuration (FCM_CREDENTIALS_FILE), never user input.
+	data, err := os.ReadFile(path) //nolint:gosec // G304: trusted operator-supplied path
 	if err != nil {
 		return nil, fmt.Errorf("read FCM credentials: %w", err)
 	}
@@ -84,7 +85,7 @@ func (f *FCMWaker) Wake(ctx context.Context, user uuid.UUID) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
 	switch {
 	case resp.StatusCode < 300:

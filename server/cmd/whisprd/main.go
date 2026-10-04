@@ -5,9 +5,11 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -123,26 +125,35 @@ func run() error {
 }
 
 // healthcheck probes the local /healthz endpoint. The runtime image is
-// distroless (no shell or curl), so the binary checks itself.
+// distroless (no shell or curl), so the binary checks itself. It always
+// targets loopback; only the port is taken from LISTEN_ADDR, and it must be
+// a valid number.
 func healthcheck() int {
-	addr := os.Getenv("LISTEN_ADDR")
-	if addr == "" {
-		addr = ":8080"
-	}
-	if addr[0] == ':' {
-		addr = "127.0.0.1" + addr
+	port := 8080
+	if addr := os.Getenv("LISTEN_ADDR"); addr != "" {
+		_, p, err := net.SplitHostPort(addr)
+		if err != nil {
+			return 1
+		}
+		n, err := strconv.Atoi(p)
+		if err != nil || n < 1 || n > 65535 {
+			return 1
+		}
+		port = n
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+addr+"/healthz", nil)
+	url := "http://" + net.JoinHostPort("127.0.0.1", strconv.Itoa(port)) + "/healthz"
+	// Not SSRF: the host is always loopback; only a validated port comes from config.
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil) //nolint:gosec // G704: fixed loopback target
 	if err != nil {
 		return 1
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: fixed loopback target
 	if err != nil {
 		return 1
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return 1
 	}

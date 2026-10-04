@@ -38,7 +38,7 @@ func postJSON(t *testing.T, url string, body any, out any) int {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if out != nil && resp.StatusCode < 300 {
 		if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
 			t.Fatal(err)
@@ -60,7 +60,7 @@ func TestHTTPFullFlow(t *testing.T) {
 	}
 
 	var ch challengeResponse
-	if code := postJSON(t, srv.URL+"/v1/auth/challenge", challengeRequest{UserID: reg.UserID}, &ch); code != http.StatusOK {
+	if code := postJSON(t, srv.URL+"/v1/auth/challenge", challengeRequest(reg), &ch); code != http.StatusOK {
 		t.Fatalf("challenge status %d", code)
 	}
 	if len(ch.Nonce) != NonceLen {
@@ -81,7 +81,7 @@ func TestHTTPFullFlow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var me meResponse
 	_ = json.NewDecoder(resp.Body).Decode(&me)
 	if resp.StatusCode != http.StatusOK || me.UserID != reg.UserID || me.DisplayName != "Ada" {
@@ -103,7 +103,7 @@ func TestHTTPMeRequiresToken(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if resp.StatusCode != http.StatusUnauthorized {
 			t.Errorf("header %q: status %d", header, resp.StatusCode)
 		}
