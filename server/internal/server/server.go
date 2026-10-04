@@ -13,6 +13,7 @@ import (
 	"whispr/server/internal/health"
 	"whispr/server/internal/messaging"
 	"whispr/server/internal/platform/httpx"
+	"whispr/server/internal/profile"
 	"whispr/server/internal/push"
 )
 
@@ -24,6 +25,7 @@ type Deps struct {
 	Messaging   *messaging.Module
 	Contacts    *contacts.Module
 	Push        *push.Module
+	Profile     *profile.Module
 }
 
 func NewRouter(d Deps) http.Handler {
@@ -45,6 +47,7 @@ func NewRouter(d Deps) http.Handler {
 			d.Messaging.Routes(r)
 			d.Contacts.Routes(r)
 			d.Push.Routes(r)
+			d.Profile.Routes(r)
 		})
 	})
 	return r

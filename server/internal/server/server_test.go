@@ -14,6 +14,7 @@ import (
 	"whispr/server/internal/contacts"
 	"whispr/server/internal/messaging"
 	"whispr/server/internal/platform/httpx"
+	"whispr/server/internal/profile"
 	"whispr/server/internal/push"
 	"whispr/server/internal/sigverify/sigverifytest"
 )
@@ -33,6 +34,7 @@ func newRouter(rateLimit int) http.Handler {
 		Messaging:   messaging.New(messaging.NewGateway(nil, messaging.NewHub(), log, messaging.GatewayOptions{UserID: auth.UserIDFrom})),
 		Contacts:    contacts.New(nil, log),
 		Push:        push.NewModule(nil, log, auth.UserIDFrom),
+		Profile:     profile.NewModule(nil, log, auth.UserIDFrom, httpx.NewRateLimiter(10).Middleware),
 	})
 }
 
