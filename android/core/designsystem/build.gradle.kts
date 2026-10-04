@@ -4,6 +4,13 @@ plugins {
     alias(libs.plugins.roborazzi)
 }
 
+// Screenshot tests are slow and only produce images for human review (they
+// have no golden images to compare against), so they are excluded from normal
+// test runs. They run with -Pwhispr.screenshots or any Roborazzi task, e.g.
+// ./gradlew :core:designsystem:recordRoborazziDebug
+val runScreenshots = providers.gradleProperty("whispr.screenshots").isPresent ||
+    gradle.startParameter.taskNames.any { it.contains("roborazzi", ignoreCase = true) }
+
 android {
     namespace = "dev.whispr.core.designsystem"
     compileSdk = 37
@@ -19,6 +26,9 @@ android {
     }
     testOptions {
         unitTests.isIncludeAndroidResources = true
+        unitTests.all { test ->
+            if (!runScreenshots) test.filter.excludeTestsMatching("*ScreenshotTest")
+        }
     }
 }
 
