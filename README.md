@@ -26,9 +26,13 @@ Server tests:
 ```sh
 cd server
 go test ./...                                   # unit tests (fake verifier)
-WHISPR_TEST_DATABASE_URL=postgres://... go test ./...   # + Postgres store tests
+WHISPR_TEST_DATABASE_URL=postgres://... go test ./...   # + Postgres integration tests
 docker build --target test .                    # full suite with real libsignal
 ```
+
+Integration tests create and drop their own database per test on the server
+in `WHISPR_TEST_DATABASE_URL` (the user needs `CREATEDB`; the compose user has
+it), so packages run in parallel and never touch existing data.
 
 The server binary only runs when built with `-tags libsignal`. A build
 without it refuses to start rather than run without signature verification.
@@ -38,7 +42,7 @@ without it refuses to start rather than run without signature verification.
 ```sh
 cd android
 ./gradlew assembleDebug testDebugUnitTest ktlintCheck lintDebug
-./gradlew :core:designsystem:recordRoborazziDebug   # design-system screenshots
+./gradlew :core:designsystem:recordRoborazziDebug   # design-system screenshots (slow; not part of normal test runs)
 ```
 
 Create `android/local.properties` with `sdk.dir=...` if `ANDROID_HOME` is not set.
