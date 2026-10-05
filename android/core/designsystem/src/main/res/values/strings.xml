@@ -26,4 +26,9 @@
         <item quantity="other">%d unread messages</item>
     </plurals>
     <string name="ds_unread_overflow">99+</string>
+
+    <string name="ds_react">Add reaction</string>
+    <string name="ds_reaction">%1$s, %2$d</string>
+    <string name="ds_reaction_mine">%1$s, %2$d, including yours</string>
+    <string name="ds_reactions">Reactions: %1$s</string>
 </resources>

@@ -40,6 +40,8 @@ data class WhisprSizes(
     val contentMaxWidth: Dp = 600.dp,
     /** Bubbles never exceed this fraction of the available width. */
     val bubbleMaxWidthFraction: Float = 0.8f,
+    /** Largest side of an image preview inside a bubble. */
+    val mediaPreviewMax: Dp = 240.dp,
 )
 
 internal val LocalWhisprSpacing = staticCompositionLocalOf { WhisprSpacing() }
