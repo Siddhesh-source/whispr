@@ -12,7 +12,11 @@ docs/      Architecture and threat model
 ```
 
 Messages, receipts, contact requests and typing indicators are end-to-end
-encrypted with libsignal (PQXDH and the Double Ratchet). The server relays
+encrypted with libsignal (PQXDH and the Double Ratchet). Group chats use
+libsignal sender keys (one encryption, fanned out by the server; keys rotate
+when anyone leaves or is removed), and the group name, picture and members are
+encrypted too. Photos, files and voice messages are encrypted on the device
+with a fresh key; object storage only ever holds ciphertext. The server relays
 and stores ciphertext only; `docs/THREAT_MODEL.md` lists what it still sees.
 
 ## Backend
@@ -31,6 +35,9 @@ Server tests:
 cd server
 go test ./...                                   # unit tests (fake verifier)
 WHISPR_TEST_DATABASE_URL=postgres://... go test ./...   # + Postgres integration tests
+WHISPR_TEST_S3_ENDPOINT=127.0.0.1:9000 WHISPR_TEST_S3_ACCESS_KEY=whispr \
+  WHISPR_TEST_S3_SECRET_KEY=whispr-dev-only WHISPR_TEST_S3_BUCKET=whispr-media \
+  WHISPR_TEST_DATABASE_URL=... go test ./internal/attachments/   # + real MinIO
 docker build --target test .                    # full suite with real libsignal
 ```
 
@@ -100,5 +107,8 @@ queued messages arrive when it next opens. To enable content-free wake-ups:
 
 ## Docs
 
+- [Groups and media design](docs/designs/groups-and-media.md)
+- [MLS as a future option](docs/MLS.md)
+- [Failure log](docs/failures/): every build, test or tool failure hit during development
 - [Architecture](docs/ARCHITECTURE.md): layers, auth protocol, storage, testing
 - [Threat model](docs/THREAT_MODEL.md): assets, adversaries, mitigations, known gaps

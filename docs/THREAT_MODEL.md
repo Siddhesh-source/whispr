@@ -243,8 +243,69 @@ keys), or session-reset requests.
 | Key material read from the device's disk | Sessions and prekeys live in the SQLCipher database; a device test checks no private key bytes appear in the file | Done, tested on device |
 | Harvest now, decrypt later with a quantum computer | PQXDH (ML-KEM) protects session establishment | Done |
 
+## Groups and media
+
+Design: `docs/designs/groups-and-media.md`. A group message is encrypted once
+with the sender's libsignal sender key and fanned out by the server
+(`send_multi`). Sender keys travel only over pairwise sessions. Group state
+(name, picture, members, roles, invitees) is sent by admins over pairwise
+sessions; the server has no group tables. Attachments are encrypted on the
+device with a fresh AES-256-GCM key (libsignal); the key and SHA-256 digest
+travel inside the encrypted message, and only the ciphertext is uploaded.
+
+### What the server still sees
+
+| Data | Notes |
+|---|---|
+| Recipient set of each group message | Needed for fan-out. Together with the stable group conversation ID, it reveals membership and group size over time |
+| Group activity | Who sends to the group, when, and the padded size |
+| Attachment metadata | Uploader, ciphertext size (**not padded**, so roughly the file size), upload time, and which accounts download it and when |
+| Group control traffic | That an admin sends pairwise envelopes to every member at once (the content, including names and pictures, is encrypted) |
+
+It does not see group names, pictures, member lists, roles, invitations,
+reactions, attachment keys or attachment contents.
+
+### What a malicious server can still do
+
+| Action | Effect | Bound |
+|---|---|---|
+| Drop or delay group updates | Members briefly disagree about the group (who is in it, its name) | Updates carry revisions; any later update converges everyone. Removals are tombstones that no concurrent update can undo |
+| Drop a sender-key distribution | The member can't read that sender's group messages; they are held encrypted | Distribution messages are resent through the session-reset protocol; held messages expire after 30 days |
+| Keep sending to a removed member | Nothing readable: the remaining members rotated their sender keys, and fan-out is computed by each sender from its own member list | Tested: the removed member's device cannot decrypt messages sent after the rotation, even given the ciphertext |
+| Serve a different blob | The digest check fails before decryption; the attachment is shown as unverifiable | Tested |
+| Delete blobs early | The attachment shows as no longer available | Not preventable |
+| Collude with a malicious admin | The admin can list a fake identity key for a member who is not our contact | An existing contact pin always wins; a mismatch with the server flags a key change. Verify safety numbers with members you care about |
+
+### Threats and mitigations
+
+| Threat | Mitigation | Status |
+|---|---|---|
+| Removed member reads later messages | Every remaining member starts a new sender-key distribution on removal or leave; queued messages are re-addressed to current members only | Done, tested (JVM and live) |
+| Non-admin changes the group | Clients accept state only from someone who is an admin in their current view | Done, tested |
+| Concurrent admin updates resurrect a removed member | Removal tombstones merge from every valid update | Done, tested |
+| Group message injected into another group | The decrypted payload must name the group its sender's distribution belongs to, and the sender must be a current member | Done |
+| Object storage or a DB thief reads media | Blobs are AES-256-GCM ciphertext; CI scans the bucket and DB for a marker | Done, tested (JVM, live, CI `e2e`) |
+| Photo reveals location or camera | Images are decoded and re-encoded (EXIF dropped); camera file names are not sent | Done, tested on device |
+| Document reveals author metadata | Files are sent byte for byte | Accepted; the UI does not strip documents |
+| Decrypted media left on disk | Blobs stay encrypted at rest; images and voice are decrypted in memory; "Open" copies go to `cache/open` and are deleted on the next start | Done |
+| Upload abuse | 25 MiB limit, 30 uploads a minute per user, 30-day retention | Done, tested |
+
+### Accepted limitations
+
+- Admin roles are enforced by clients only, since the server knows no groups.
+- A member who hasn't yet processed a removal can still send to the removed
+  member under the old key (as in Signal). The window closes when they
+  process it.
+- Sender keys have forward secrecy along the chain but no post-compromise
+  security until the next rotation. We rotate on removal and leave only. See
+  `docs/MLS.md`.
+- Groups have no resend protocol for undecryptable content messages; they
+  become "couldn't be recovered" placeholders.
+- No read receipts or typing indicators in groups.
+- Attachment sizes are not padded.
+
 ## Review triggers
 
 Revisit this document whenever we add or change: anything stored on the
 server, anything logged, any new key or secret, push notifications, contact
-discovery, backups or multi-device, or the auth message formats.
+discovery, backups or multi-device, the auth message formats, group state rules, or attachment handling.

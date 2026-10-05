@@ -1,7 +1,7 @@
 # Whispr architecture
 
 Status: draft covering identity, authentication, the app shell, 1:1
-messaging, QR contacts and verification, and end-to-end encryption. It describes what exists today and marks what is planned.
+messaging, QR contacts and verification, end-to-end encryption, and encrypted groups and media. It describes what exists today and marks what is planned.
 
 ## Goals and non-negotiables
 
@@ -26,7 +26,8 @@ android/                 Kotlin, Jetpack Compose
 server/                  Go service
   cmd/whisprd/           Entry point
   internal/auth/         Registration, challenge-response, tokens
-  internal/messaging/    WebSocket gateway, opaque envelope store and relay
+  internal/messaging/    WebSocket gateway, opaque envelope store and relay (1:1 and group fan-out)
+  internal/attachments/  Encrypted attachment blobs in S3-compatible storage, retention janitor
   internal/contacts/     User lookup by ID (used after scanning a QR)
   internal/profile/      Display name, optional usernames (name.42) and lookup
   internal/push/         Push token registration, content-free FCM wake-ups
@@ -402,7 +403,96 @@ Design: `docs/designs/end-to-end-encryption.md`. All cryptography is libsignal.
 | Data (device) | the SQLCipher file holds no private key bytes or message text |
 | CI `e2e` workflow | live tests against the composed server; a marker message is absent from `pg_dump` and captured traffic |
 
+## Groups and media
+
+Design: `docs/designs/groups-and-media.md`. Threat model: `docs/THREAT_MODEL.md` §Groups and media.
+
+### Server
+
+- **`send_multi`** (WebSocket) stores one copy of a ciphertext per recipient
+  in one transaction, under a single dedup tombstone.
+  - It locks recipients in sorted order.
+  - The fan-out is capped at 100 recipients.
+  - An unknown, duplicate or self recipient rejects the whole send.
+  - Each recipient's ack produces its own "delivered" receipt.
+  - The server keeps no group tables.
+- **`internal/attachments`**:
+  - `POST /v1/attachments` streams a client-encrypted blob of at most
+    25 MiB + 28 bytes into S3-compatible storage under a random ID.
+  - `GET /v1/attachments/{id}` streams it back.
+  - Uploads are limited to 30 a minute per user, and these handlers set their
+    own 5-minute deadlines.
+  - A janitor deletes blobs after `ATTACHMENT_RETENTION` (30 days).
+  - The `attachments` table (migration 0005) holds the ID, uploader, size and
+    upload time.
+  - Configure it with `S3_ENDPOINT`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`,
+    `S3_BUCKET` and `S3_USE_SSL`. Without them, media routes answer 503.
+
+### Android (`data`)
+
+- **`GroupManager`** applies the group rules inside crypto transactions:
+  - updates are accepted only from an admin, and only if newer
+    (revision, then author ID);
+  - removals are tombstones that every valid update merges;
+  - a new sender-key distribution starts whenever anyone leaves or is removed;
+  - members who aren't our contacts become hidden contacts pinned to the
+    admin's key (an existing pin always wins).
+- **Sender keys:**
+  - `SenderKeys` is libsignal's `SenderKeyStore` on SQLCipher.
+  - `SessionCrypto` gains `distributionMessage`, `processDistribution`,
+    `encryptGroup` and `decryptGroup`.
+  - Wire type `0x03` marks a SenderKeyMessage.
+- **Group lane:** an outbox entry with `groupId` and fixed `recipients`.
+  - Before a message is queued, its sender key goes to anyone who lacks it,
+    over their pairwise lane.
+  - At the head of the lane, the recipients are intersected with the current
+    members, and the message is encrypted once and sent with `send_multi`.
+  - It shows Delivered once every recipient has acknowledged it.
+- **Incoming group messages:**
+  - A message is held encrypted (`held_group_envelopes`) until its sender's
+    key or the group state arrives; held messages expire after 30 days.
+  - It is shown only if the payload names the group the distribution belongs
+    to and the sender is a current member.
+- **Media:**
+  - `MediaPreparer` re-encodes images (≤ 2048 px JPEG, EXIF dropped, a
+    ≤ 16 KiB inline thumbnail) and reads other files byte for byte.
+  - `MediaCrypto` uses libsignal AES-256-GCM plus a SHA-256 digest.
+  - `MediaService` encrypts, uploads, and then queues the message. On
+    receipt it downloads, checks size and digest, and stores the blob still
+    encrypted. Plaintext lives only in memory, or in `cache/open` for
+    "Open with", which is cleared on start.
+- **Reactions:** one per reactor per message (newest wins), in 1:1 chats and
+  groups.
+- **Room v5** (auto-migration) adds:
+  - tables: groups, members, sender keys, key shares, distributions, held
+    group envelopes, group sends, attachments, reactions;
+  - columns: `contacts.hidden`, `messages.system`, `outbox.groupId` and
+    `outbox.recipients`.
+
+### Android (`app`)
+
+- New group and Group info screens: rename, picture, add, invite, make or
+  dismiss admin, remove, leave.
+- Group invites appear under Requests.
+- In chat:
+  - attach a photo (system photo picker) or a file;
+  - record voice (`RECORD_AUDIO`, asked on first use);
+  - long-press to react;
+  - group events are shown as centred notices.
+- Decrypted files are shared through a FileProvider limited to `cache/open/`.
+
+### Testing
+
+| Where | What |
+|---|---|
+| Server integration | `send_multi` fan-out, receipts, dedup, atomic rejection, ordering with 1:1 sends, push wake-ups; attachments: round trip, limits, rate limit, retention purge, real MinIO (`WHISPR_TEST_S3_*`) |
+| Data (JVM, three real engines on `FakeRelay`) | three users share a group; a removed member gets nothing and can't decrypt captured ciphertext; leave rotates; non-admin and forged updates ignored; rename and picture; invite accept and decline; admin hand-over; key arriving after the message; reactions 1:1 and group; media round trips with only ciphertext stored; tampered and expired blobs |
+| Data (JVM, `GroupStateTest`) | concurrent-admin removal tie in both orders; re-add above the tombstone; malformed states; pins win |
+| Live (real server + MinIO) | `LiveGroupsTest`: group, picture, removal; the raw stored blob holds no marker |
+| Device (emulator) | photos lose GPS, camera make and capture time; the SQLCipher file holds no group name or attachment key |
+| CI `e2e` | bucket copy scanned for the marker with the DB dump and traffic |
+
 ## Planned next (not built)
 
-- Encrypted media in S3/MinIO: encrypted client-side, server stores opaque blobs.
 - Encrypted profiles (replaces the plaintext display name on the server).
+- MLS for groups, if the trade-offs in `docs/MLS.md` change.
