@@ -24,6 +24,9 @@ android {
         unitTests.all { test ->
             // Live end-to-end test against a running server (see LiveServerTest).
             System.getenv("WHISPR_SERVER_URL")?.let { test.environment("WHISPR_SERVER_URL", it) }
+            // The text CI then searches for in the database dump, traffic and media bucket.
+            // Without it the marker tests skip (or pick their own) and that scan proves nothing.
+            System.getenv("WHISPR_E2E_MARKER")?.let { test.environment("WHISPR_E2E_MARKER", it) }
         }
     }
 }

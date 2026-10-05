@@ -46,6 +46,9 @@ services:
       DATABASE_URL: postgres://whispr:whispr-dev-only@db:5432/whispr?sslmode=disable
       LISTEN_ADDR: ":8080"
       LOG_LEVEL: info
+      # Per-IP limit on registration and sign-in. Live test suites run every
+      # client from 127.0.0.1 and set this higher; keep the default otherwise.
+      RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-30}
       # Encrypted attachments (ciphertext only; keys never reach the server).
       S3_ENDPOINT: minio:9000
       S3_ACCESS_KEY: whispr

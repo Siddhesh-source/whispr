@@ -37,6 +37,10 @@ jobs:
           tags: whispr-server:latest
           cache-from: type=gha,scope=server
       - name: Start the stack
+        # Every live-test client signs in from 127.0.0.1, so the per-IP
+        # auth limit (30/min by default) would throttle the suite itself.
+        env:
+          RATE_LIMIT_PER_MINUTE: "600"
         run: docker compose up -d --no-build --wait server
       - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
         with:
