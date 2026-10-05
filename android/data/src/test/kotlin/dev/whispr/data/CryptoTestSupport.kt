@@ -50,14 +50,18 @@ class FakeKeyServer {
     val uploads = mutableListOf<KeyUploadRequest>()
 
     /** Set to make every upload fail with this HTTP status. */
-    var failUploadsWith: Int? = null
+    @Volatile var failUploadsWith: Int? = null
 
+    // Called concurrently from MockWebServer threads (several devices at once), like the real server.
+    @Synchronized
     fun register(userId: String, identity: ByteArray) {
         users.getOrPut(userId) { Keys(identity) }
     }
 
+    @Synchronized
     fun oneTimeLeft(userId: String) = users.getValue(userId).oneTime.size
 
+    @Synchronized
     fun drainOneTimeKeys(userId: String) {
         users.getValue(userId).oneTime.clear()
         users.getValue(userId).kyber.clear()
@@ -65,6 +69,10 @@ class FakeKeyServer {
 
     fun clientFor(userId: String): KeyServer = object : KeyServer {
         override suspend fun counts(): ApiResult<KeyCountsResponse> {
+            synchronized(this@FakeKeyServer) { return countsLocked() }
+        }
+
+        private fun countsLocked(): ApiResult<KeyCountsResponse> {
             countCalls++
             val k = users.getValue(userId)
             return ApiResult.Success(
@@ -73,6 +81,10 @@ class FakeKeyServer {
         }
 
         override suspend fun upload(request: KeyUploadRequest): ApiResult<Unit> {
+            synchronized(this@FakeKeyServer) { return uploadLocked(request) }
+        }
+
+        private fun uploadLocked(request: KeyUploadRequest): ApiResult<Unit> {
             failUploadsWith?.let { return ApiResult.HttpError(it) }
             uploads += request
             val k = users.getValue(userId)
@@ -85,14 +97,16 @@ class FakeKeyServer {
         }
     }
 
-    val bundles = BundleSource { target ->
-        val k = users[target] ?: return@BundleSource BundleResult.UnknownUser
+    val bundles = BundleSource { target -> synchronized(this@FakeKeyServer) { bundleLocked(target) } }
+
+    private fun bundleLocked(target: String): BundleResult {
+        val k = users[target] ?: return BundleResult.UnknownUser
         val reg = k.registrationId
         val signed = k.signed
         val lastResort = k.lastResort
-        if (reg == null || signed == null || lastResort == null) return@BundleSource BundleResult.NoKeys
+        if (reg == null || signed == null || lastResort == null) return BundleResult.NoKeys
         val kyber = k.kyber.removeFirstOrNull()
-        BundleResult.Success(
+        return BundleResult.Success(
             BundleResponse(
                 userId = target,
                 deviceId = 1,

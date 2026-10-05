@@ -48,6 +48,10 @@ class FakeRelay : Dispatcher() {
     val history = CopyOnWriteArrayList<Stored>()
     private val queues = mutableMapOf<String, MutableList<Stored>>()
     private val sockets = ConcurrentHashMap<String, WebSocket>()
+    private val opens = ConcurrentHashMap<String, Int>()
+
+    /** How many WebSocket connections [user] has opened. */
+    fun connections(user: String): Int = opens[user] ?: 0
     private val accepted = mutableMapOf<String, Long>() // "sender/id" -> seq
 
     /** "recipient/messageId" of every envelope the recipient acknowledged (stored on the device). */
@@ -129,6 +133,7 @@ class FakeRelay : Dispatcher() {
     private inner class Listener(private val user: String) : WebSocketListener() {
         override fun onOpen(webSocket: WebSocket, response: Response) {
             sockets[user] = webSocket
+            opens.merge(user, 1, Int::plus)
             flush(user)
         }
 

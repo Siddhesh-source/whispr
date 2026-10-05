@@ -292,10 +292,12 @@ class MessagingEngine(
 
     /** Key maintenance and session resets while connected. */
     private suspend fun upkeep(me: String) {
-        maintainer.maintain()
+        var keysOk = maintainKeys()
         resetSignal.trySend(Unit)
         while (true) {
-            withTimeoutOrNull(timings.resetTickMs) { resetSignal.receive() }
+            // Until our keys are on the server nobody can start a chat with us: retry soon, not next tick.
+            withTimeoutOrNull(if (keysOk) timings.resetTickMs else timings.parkRetryMs) { resetSignal.receive() }
+            if (!keysOk) keysOk = maintainKeys()
             try {
                 resets.run(me)
                 // Group messages whose sender key never came are dropped after 30 days.
@@ -307,6 +309,15 @@ class MessagingEngine(
             }
             outboxSignal.trySend(Unit)
         }
+    }
+
+    /** Uploads missing keys; false (retried by [upkeep]) if the server could not be reached or refused. */
+    private suspend fun maintainKeys(): Boolean = try {
+        maintainer.maintain()
+    } catch (c: CancellationException) {
+        throw c
+    } catch (_: Exception) {
+        false
     }
 
     /**

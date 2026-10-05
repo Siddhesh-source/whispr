@@ -181,6 +181,10 @@ class ContactTrustTest {
     @Test
     fun keyChangeIsFlaggedBlocksSendingAndNeedsAcknowledgement() = runBlocking {
         contacts.addFromCode(peerCode())
+        // Let the contact request go out first. Its bundle fetch (which this fake
+        // serves under the old key) would otherwise race the acknowledgement below
+        // and, correctly, flag the key change again.
+        eventually("contact request sent") { db.outboxDao().observeCount().first() == 0 }
         contacts.setVerified(peer, true)
         assertEquals(TrustState.Verified, contacts.contact(peer)!!.trust)
 
