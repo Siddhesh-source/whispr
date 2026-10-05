@@ -8,6 +8,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
+	"whispr/server/internal/attachments"
 	"whispr/server/internal/auth"
 	"whispr/server/internal/contacts"
 	"whispr/server/internal/health"
@@ -28,6 +29,9 @@ type Deps struct {
 	Keys        *keys.Module
 	Push        *push.Module
 	Profile     *profile.Module
+	// Attachments is nil when object storage is not configured; uploads then
+	// answer 503 so clients show "media unavailable" instead of failing silently.
+	Attachments *attachments.Module
 }
 
 func NewRouter(d Deps) http.Handler {
@@ -51,6 +55,13 @@ func NewRouter(d Deps) http.Handler {
 			d.Keys.Routes(r)
 			d.Push.Routes(r)
 			d.Profile.Routes(r)
+			if d.Attachments != nil {
+				d.Attachments.Routes(r)
+			} else {
+				r.HandleFunc("/attachments*", func(w http.ResponseWriter, _ *http.Request) {
+					httpx.WriteError(w, http.StatusServiceUnavailable, "media_unavailable", "media storage is not configured")
+				})
+			}
 		})
 	})
 	return r

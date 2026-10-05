@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"whispr/server/internal/attachments"
 	"whispr/server/internal/auth"
 	"whispr/server/internal/config"
 	"whispr/server/internal/contacts"
@@ -86,6 +87,26 @@ func run() error {
 	go msgSvc.RunJanitor(ctx, time.Hour)
 	gateway := messaging.NewGateway(msgSvc, hub, log, messaging.GatewayOptions{UserID: auth.UserIDFrom})
 
+	var media *attachments.Module
+	if cfg.S3Endpoint != "" {
+		objects, err := attachments.NewS3Objects(attachments.S3Config{
+			Endpoint: cfg.S3Endpoint, AccessKey: cfg.S3AccessKey, SecretKey: cfg.S3SecretKey,
+			Bucket: cfg.S3Bucket, UseSSL: cfg.S3UseSSL,
+		})
+		if err != nil {
+			return err
+		}
+		if err := objects.CheckBucket(ctx); err != nil {
+			return err
+		}
+		media = attachments.NewModule(attachments.NewPGStore(pool), objects, log, auth.UserIDFrom,
+			attachments.Options{Retention: cfg.AttachmentRetention})
+		go media.RunJanitor(ctx, time.Hour)
+		log.Info("media enabled", "retention", cfg.AttachmentRetention.String())
+	} else {
+		log.Warn("media disabled: S3_ENDPOINT not set")
+	}
+
 	srv := &http.Server{
 		Addr: cfg.ListenAddr,
 		Handler: server.NewRouter(server.Deps{
@@ -98,7 +119,8 @@ func run() error {
 			Keys:        keys.NewModule(keys.NewPGStore(pool), verifier, log, auth.UserIDFrom, keys.DefaultLimits()),
 			Push:        push.NewModule(pushStore, log, auth.UserIDFrom),
 			// Username lookups get a stricter per-IP limit than other calls.
-			Profile: profile.NewModule(profile.NewStore(pool), log, auth.UserIDFrom, httpx.NewRateLimiter(10).Middleware),
+			Profile:     profile.NewModule(profile.NewStore(pool), log, auth.UserIDFrom, httpx.NewRateLimiter(10).Middleware),
+			Attachments: media,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,

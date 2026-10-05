@@ -36,3 +36,36 @@ func TestLoadRejectsBadValues(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadMediaSettings(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://x")
+	t.Setenv("S3_ENDPOINT", "")
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.S3Endpoint != "" || c.AttachmentRetention != 30*24*time.Hour || c.S3Bucket != "whispr-media" || !c.S3UseSSL {
+		t.Fatalf("unexpected media defaults %+v", c)
+	}
+
+	t.Setenv("S3_ENDPOINT", "minio:9000")
+	t.Setenv("S3_ACCESS_KEY", "")
+	if _, err := Load(); err == nil {
+		t.Fatal("S3_ENDPOINT without credentials accepted")
+	}
+	t.Setenv("S3_ACCESS_KEY", "a")
+	t.Setenv("S3_SECRET_KEY", "b")
+	t.Setenv("S3_USE_SSL", "false")
+	t.Setenv("ATTACHMENT_RETENTION", "72h")
+	c, err = Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.S3UseSSL || c.AttachmentRetention != 72*time.Hour {
+		t.Fatalf("overrides ignored %+v", c)
+	}
+	t.Setenv("ATTACHMENT_RETENTION", "never")
+	if _, err := Load(); err == nil {
+		t.Fatal("bad retention accepted")
+	}
+}
