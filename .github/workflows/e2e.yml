@@ -63,11 +63,27 @@ jobs:
         run: sudo pkill -INT tcpdump; sleep 1; sudo chmod a+r "$RUNNER_TEMP/frames.pcap"
       - name: Dump the server database
         run: docker compose exec -T db pg_dump -U whispr whispr > "$RUNNER_TEMP/db.sql"
+      # Every object in the media bucket, byte for byte. LiveGroupsTest uploads
+      # a picture whose plaintext contains the marker.
+      - name: Copy the object storage bucket
+        run: |
+          mkdir -p "$RUNNER_TEMP/bucket"
+          docker run --rm --network whispr_default \
+            -e MC_HOST_local=http://whispr:whispr-dev-only@minio:9000 \
+            -v "$RUNNER_TEMP/bucket:/out" \
+            cgr.dev/chainguard/minio-client:latest mirror local/whispr-media /out
+          sudo chmod -R a+r "$RUNNER_TEMP/bucket"
+          count=$(find "$RUNNER_TEMP/bucket" -type f | wc -l)
+          echo "objects: $count"
+          test "$count" -gt 0 # an empty bucket would prove nothing
       # Client-to-server WebSocket frames are masked, so the capture mainly
       # proves the server-to-client direction and plain HTTP; the database
-      # dump covers what the server stores.
+      # dump and bucket copy cover what the server stores.
       - name: No plaintext marker anywhere
-        run: python3 .github/scripts/no-marker.py "$WHISPR_E2E_MARKER" "$RUNNER_TEMP/frames.pcap" "$RUNNER_TEMP/db.sql"
+        run: >-
+          find "$RUNNER_TEMP/bucket" -type f -print0 |
+          xargs -0 python3 .github/scripts/no-marker.py "$WHISPR_E2E_MARKER"
+          "$RUNNER_TEMP/frames.pcap" "$RUNNER_TEMP/db.sql"
       - name: Server logs
         if: failure()
         run: docker compose logs server
