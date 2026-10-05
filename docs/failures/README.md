@@ -14,5 +14,6 @@ was done, and whether it is fixed or open.
 | 2026-10-05 | [LiveMessagingTest failed before this work](2026-10-05-live-messaging-test-preexisting.md) | fixed |
 | 2026-10-05 | [Group role mismatch](2026-10-05-group-role-mismatch.md) | fixed |
 | 2026-10-05 | [LiveGroupsTest deadlock](2026-10-05-live-groups-test-deadlock.md) | fixed |
-| 2026-10-05 | [Flaky tests under load](2026-10-05-flaky-tests-under-load.md) | open (flaky) |
+| 2026-10-05 | [Intermittent test failures: key upload never retried](2026-10-05-flaky-tests-under-load.md) | fixed |
+| 2026-10-05 | [CI ciphertext scan could pass without proving anything](2026-10-05-e2e-marker-not-forwarded.md) | fixed |
 | 2026-10-05 | [Compile, lint, test and tooling fixes](2026-10-05-compile-and-test-fixes.md) | fixed |

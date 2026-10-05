@@ -1,13 +1,31 @@
-# Two JVM tests failed once while the live tests ran in the same build
+# Two JVM tests failed intermittently
 
-- **What failed:** both in the full `:data:testDebugUnitTest` run that also had `WHISPR_SERVER_URL` set:
-  - `ContactTrustTest.keyChangeIsFlaggedBlocksSendingAndNeedsAcknowledgement` (assertion at line 203);
-  - `GroupMessagingTest.leavingRotatesKeysAndTheLeaverReadsNothingAfter` (`timed out waiting for: keys published`).
-- **Investigation:**
-  - Re-ran both classes 3 times on their own: 12/12 and 8/8 passed each time.
-  - `ContactTrustTest` also passes on the baseline worktree (2/2 runs).
-  - Likely cause of the first failure: the outbox's bundle fetch can race the acknowledged key change in that test, and it re-flags the change.
-  - Likely cause of the second: CPU contention from three live engines plus three relay engines.
-- **Status:** open (flaky, not reproduced in isolation). If it recurs:
-  - `ContactTrustTest` should wait for the outbox to drain before acknowledging;
-  - `GroupMessagingTest` could use a longer key-publish timeout.
+- **What failed:**
+  - `GroupMessagingTest.leavingRotatesKeysAndTheLeaverReadsNothingAfter`: `timed out waiting for: keys published`. Seen twice: once in the first full run, and again in run 2 of 3 during the follow-up check.
+  - `ContactTrustTest.keyChangeIsFlaggedBlocksSendingAndNeedsAcknowledgement`: assertion at line 203 (`sendText` returned false after the user acknowledged the key change). Seen once.
+
+## Root causes
+
+**1. Product bug: a failed key upload was never retried while connected.**
+- `MessagingEngine.upkeep` called `maintainer.maintain()` once per connection.
+- `maintain()` returns `false` on failure instead of throwing, so after one failed upload nothing retried until the socket reconnected.
+- A device that stayed connected kept no published prekeys, so nobody could start a chat with it.
+- The test fake made the failure likely: `FakeKeyServer` used an unsynchronized `HashMap` and `ArrayDeque` while three devices' HTTP threads uploaded at once.
+
+**2. Test race (pre-existing; the baseline has the same test).**
+- The fake server reported the new key from `/v1/users` but kept serving bundles under the old key.
+- When the contact request's bundle fetch landed after the user's acknowledgement, the engine correctly flagged the key change again.
+
+## Fixes
+
+- **Engine:** `upkeep` retries `maintain()` every `parkRetryMs` (30 s in production) until the keys are on the server, then returns to the 5-minute tick. Exceptions count as a failure to retry. Settings keeps showing "keys not set up, retrying" meanwhile, so the failure is never silent.
+- **New `KeyUploadRetryTest`:** the first upload fails with 503 and the keys must still reach the server on the same connection.
+  - It fails on the previous engine (`timed out waiting for: keys uploaded on the same connection`) and passes on the fixed one.
+- **`FakeKeyServer`:** made thread-safe, as the real server is.
+- **`ContactTrustTest`:** lets the contact request go out before simulating the key change.
+
+## Verification
+
+- The full data suite with the live server ran 3 times, then twice more with the e2e marker. 124 tests ran each time, with 0 failures.
+
+**Status:** fixed.
