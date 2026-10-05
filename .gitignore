@@ -32,3 +32,4 @@ android/firebase.properties
 **/google-services.json
 *service-account*.json
 secrets/
+__pycache__/

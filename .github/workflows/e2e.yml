@@ -1,0 +1,82 @@
+name: e2e
+
+# Real Android data layer against the real server (docker compose): the live
+# tests, plus a check that a marker message never appears in plaintext in the
+# server's database or in the traffic between devices and server.
+on:
+  push:
+    branches: [main]
+    paths: ["android/**", "server/**", "docker-compose.yml", ".github/workflows/e2e.yml", ".github/scripts/**"]
+  pull_request:
+    paths: ["android/**", "server/**", "docker-compose.yml", ".github/workflows/e2e.yml", ".github/scripts/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One run per branch: a newer push cancels the older run (main keeps every run).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+# Actions are pinned to commit SHAs (tags are mutable); Dependabot keeps them current.
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      # Same cache scope as server.yml, so the slow libsignal build is reused.
+      # Tagged with compose's default name so `compose up --no-build` uses it.
+      - name: Server image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: server
+          load: true
+          tags: whispr-server:latest
+          cache-from: type=gha,scope=server
+      - name: Start the stack
+        run: docker compose up -d --no-build --wait server
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+      - name: Marker
+        run: echo "WHISPR_E2E_MARKER=whispr-e2e-marker-$(openssl rand -hex 12)" >> "$GITHUB_ENV"
+      - name: Capture traffic
+        run: |
+          sudo tcpdump -i lo -U -w "$RUNNER_TEMP/frames.pcap" 'tcp port 8080' &
+          sleep 2
+      - name: Live tests
+        working-directory: android
+        env:
+          WHISPR_SERVER_URL: http://127.0.0.1:8080/
+        run: >-
+          ./gradlew -Porg.gradle.java.installations.auto-download=false
+          :data:testDebugUnitTest --tests '*Live*'
+      - name: Stop capture
+        if: always()
+        run: sudo pkill -INT tcpdump; sleep 1; sudo chmod a+r "$RUNNER_TEMP/frames.pcap"
+      - name: Dump the server database
+        run: docker compose exec -T db pg_dump -U whispr whispr > "$RUNNER_TEMP/db.sql"
+      # Client-to-server WebSocket frames are masked, so the capture mainly
+      # proves the server-to-client direction and plain HTTP; the database
+      # dump covers what the server stores.
+      - name: No plaintext marker anywhere
+        run: python3 .github/scripts/no-marker.py "$WHISPR_E2E_MARKER" "$RUNNER_TEMP/frames.pcap" "$RUNNER_TEMP/db.sql"
+      - name: Server logs
+        if: failure()
+        run: docker compose logs server
+      - name: Upload reports
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-reports
+          path: |
+            android/data/build/reports/
+            android/data/build/test-results/
+          retention-days: 14

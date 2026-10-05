@@ -6,9 +6,11 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.whispr.data.crypto.AndroidKeystoreKeyWrapper
 import dev.whispr.data.crypto.SecretFileStore
+import dev.whispr.data.crypto.SignalStore
 import dev.whispr.data.db.AccountEntity
 import dev.whispr.data.db.DatabaseKey
 import dev.whispr.data.db.LazyKeyOpenHelperFactory
+import dev.whispr.data.db.MessageEntity
 import dev.whispr.data.db.WhisprDatabase
 import dev.whispr.data.identity.LibsignalIdentityRepository
 import java.io.File
@@ -23,6 +25,10 @@ import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.signal.libsignal.protocol.IdentityKeyPair
+import org.signal.libsignal.protocol.ecc.ECKeyPair
+import org.signal.libsignal.protocol.state.PreKeyRecord
+import org.signal.libsignal.protocol.state.SignedPreKeyRecord
 
 @RunWith(AndroidJUnit4::class)
 class KeystoreAndDatabaseTest {
@@ -71,6 +77,55 @@ class KeystoreAndDatabaseTest {
         val text = String(bytes, Charsets.ISO_8859_1)
         assertFalse("SQLite header found: file is not encrypted", text.startsWith("SQLite format 3"))
         assertFalse("plaintext leaked into database file", text.contains("Plaintext Marker"))
+        context.deleteDatabase(name)
+    }
+
+    @Test
+    fun keyMaterialAndMessagesAreEncryptedAtRest() = runTest {
+        val key = DatabaseKey(SecretFileStore(dir, AndroidKeystoreKeyWrapper("whispr.test." + UUID.randomUUID())))
+        val name = "keys-" + UUID.randomUUID() + ".db"
+        val db = Room.databaseBuilder(context, WhisprDatabase::class.java, name)
+            .openHelperFactory(LazyKeyOpenHelperFactory { key.getOrCreate() })
+            .build()
+        val store = SignalStore(db.cryptoDao())
+        val identity = IdentityKeyPair.generate()
+        val preKey = ECKeyPair.generate()
+        val signed = ECKeyPair.generate()
+        val marker = "whispr-at-rest-marker-" + UUID.randomUUID()
+        db.runInTransaction {
+            store.storePreKey(1, PreKeyRecord(1, preKey))
+            store.storeSignedPreKey(
+                1,
+                SignedPreKeyRecord(1, 0, signed, identity.privateKey.calculateSignature(signed.publicKey.serialize())),
+            )
+            db.cryptoDao().insertMessage(
+                MessageEntity(
+                    messageId = "m",
+                    conversationId = "c",
+                    peerId = "p",
+                    outgoing = false,
+                    body = marker,
+                    timestamp = 0,
+                    status = null,
+                ),
+            )
+        }
+        db.close()
+
+        // The main file plus any journal or WAL that outlived the close.
+        val files = listOf("", "-wal", "-journal").map {
+            File(context.getDatabasePath(name).path + it)
+        }.filter { it.exists() }
+        val bytes = files.fold(ByteArray(0)) { all, f -> all + f.readBytes() }
+        val text = String(bytes, Charsets.ISO_8859_1)
+        assertFalse("SQLite header found: file is not encrypted", text.startsWith("SQLite format 3"))
+        assertFalse("message text leaked", text.contains(marker))
+        for ((what, secret) in listOf("one-time prekey" to preKey, "signed prekey" to signed)) {
+            assertFalse(
+                "$what private key leaked",
+                text.contains(String(secret.privateKey.serialize(), Charsets.ISO_8859_1)),
+            )
+        }
         context.deleteDatabase(name)
     }
 

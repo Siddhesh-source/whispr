@@ -234,6 +234,42 @@ class LiveMessagingTest {
         }
     }
 
+    /**
+     * Sends WHISPR_E2E_MARKER for CI (.github/workflows/e2e.yml) to look for
+     * afterwards in a dump of the server database and in captured traffic.
+     * Carol goes offline before it is sent, so her copy is still queued on
+     * the server when the database is dumped.
+     */
+    @Test
+    fun markerTravelsAndRestsOnlyAsCiphertext() = runBlocking {
+        val url = System.getenv("WHISPR_SERVER_URL")
+        val marker = System.getenv("WHISPR_E2E_MARKER")
+        assumeTrue("WHISPR_SERVER_URL or WHISPR_E2E_MARKER not set", !url.isNullOrBlank() && !marker.isNullOrBlank())
+        val alice = Device("Alice", url!!)
+        val bob = Device("Bob", url)
+        val carol = Device("Carol", url)
+        try {
+            listOf(alice, bob, carol).forEach { it.register() }
+            listOf(alice, bob, carol).forEach { it.goOnline() }
+            check(alice.contacts.addById(bob.id.value) is AddContactResult.Added)
+            check(alice.contacts.addById(carol.id.value) is AddContactResult.Added)
+            val withCarol = ConversationId.direct(alice.id, carol.id)
+            alice.repo.sendText(carol.id, "warm-up")
+            eventually("carol has a session") { carol.repo.observeMessages(withCarol).first().isNotEmpty() }
+            carol.restart() // offline from here on
+
+            alice.repo.sendText(bob.id, marker!!)
+            alice.repo.sendText(carol.id, marker)
+            val withBob = ConversationId.direct(alice.id, bob.id)
+            eventually("bob decrypted it") { bob.repo.observeMessages(withBob).first().any { it.text == marker } }
+            eventually("carol's copy queued on the server") {
+                alice.repo.observeMessages(withCarol).first().last().status == MessageStatus.Sent
+            }
+        } finally {
+            listOf(alice, bob, carol).forEach { it.close() }
+        }
+    }
+
     private fun eventually(what: String, cond: suspend () -> Boolean) = runBlocking {
         val deadline = System.currentTimeMillis() + 20_000
         while (!cond()) {
