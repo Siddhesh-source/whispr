@@ -8,6 +8,7 @@ import dev.whispr.domain.model.SessionState
 import dev.whispr.domain.repository.AccountRepository
 import dev.whispr.domain.repository.AuthRepository
 import dev.whispr.domain.repository.ConnectivityRepository
+import dev.whispr.domain.repository.EncryptionRepository
 import dev.whispr.domain.repository.SettingsRepository
 import javax.inject.Inject
 import kotlinx.coroutines.flow.SharingStarted
@@ -30,6 +31,7 @@ sealed interface SettingsUiState {
         val version: String,
         val readReceipts: Boolean = false,
         val typingIndicators: Boolean = false,
+        val keysRegistered: Boolean = true,
     ) : SettingsUiState
 }
 
@@ -39,6 +41,7 @@ class SettingsViewModel @Inject constructor(
     auth: AuthRepository,
     connectivity: ConnectivityRepository,
     private val settings: SettingsRepository,
+    encryption: EncryptionRepository,
 ) : ViewModel() {
 
     val state: StateFlow<SettingsUiState> = combine(
@@ -46,7 +49,8 @@ class SettingsViewModel @Inject constructor(
         auth.session,
         connectivity.isOnline,
         settings.observePrivacy(),
-    ) { account, session, online, privacy ->
+        encryption.observeKeysRegistered(),
+    ) { account, session, online, privacy, keysRegistered ->
         val userId = account?.userId ?: return@combine SettingsUiState.Error
         SettingsUiState.Content(
             displayName = account.displayName,
@@ -61,6 +65,7 @@ class SettingsViewModel @Inject constructor(
             version = BuildConfig.VERSION_NAME,
             readReceipts = privacy.readReceipts,
             typingIndicators = privacy.typingIndicators,
+            keysRegistered = keysRegistered,
         )
     }
         .catch { emit(SettingsUiState.Error) }

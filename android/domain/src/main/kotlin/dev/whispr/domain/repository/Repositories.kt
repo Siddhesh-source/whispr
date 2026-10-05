@@ -147,3 +147,8 @@ interface SettingsRepository {
 
     suspend fun setTypingIndicators(enabled: Boolean)
 }
+
+interface EncryptionRepository {
+    /** False while this device's encryption keys could not be uploaded to the server. */
+    fun observeKeysRegistered(): Flow<Boolean>
+}

@@ -37,6 +37,7 @@ import dev.whispr.domain.repository.AccountRepository
 import dev.whispr.domain.repository.AuthRepository
 import dev.whispr.domain.repository.ConnectivityRepository
 import dev.whispr.domain.repository.ContactsRepository
+import dev.whispr.domain.repository.EncryptionRepository
 import dev.whispr.domain.repository.IdentityRepository
 import dev.whispr.domain.repository.MessagingRepository
 import dev.whispr.domain.repository.ProfileRepository
@@ -151,6 +152,9 @@ object DataModule {
     @Provides @Singleton
     fun preKeyMaintainer(db: WhisprDatabase, store: SignalStore, identity: LibsignalIdentityRepository, keys: KeysApi) =
         PreKeyMaintainer(db, store, identity, keys, cryptoDispatcher)
+
+    @Provides
+    fun encryption(maintainer: PreKeyMaintainer): EncryptionRepository = maintainer
 
     @Provides @Singleton
     fun messagingEngine(

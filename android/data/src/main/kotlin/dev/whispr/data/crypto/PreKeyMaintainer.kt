@@ -8,9 +8,11 @@ import dev.whispr.data.network.KeyCountsResponse
 import dev.whispr.data.network.KeyUploadRequest
 import dev.whispr.data.network.OneTimeKeyJson
 import dev.whispr.data.network.SignedKeyJson
+import dev.whispr.domain.repository.EncryptionRepository
 import java.util.Base64
 import java.util.concurrent.Callable
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -46,13 +48,15 @@ class PreKeyMaintainer(
     private val server: KeyServer,
     private val dispatcher: CoroutineDispatcher,
     private val clock: () -> Long = System::currentTimeMillis,
-) {
+) : EncryptionRepository {
     private val dao get() = db.cryptoDao()
     private val mutex = Mutex()
     private val registered = MutableStateFlow(true)
 
     /** False while our keys could not be uploaded; nobody can start a chat with us then. */
     val keysRegistered: StateFlow<Boolean> = registered.asStateFlow()
+
+    override fun observeKeysRegistered(): Flow<Boolean> = keysRegistered
 
     /** Returns true if the server holds a complete, current key set afterwards. */
     suspend fun maintain(force: Boolean = false): Boolean = mutex.withLock {

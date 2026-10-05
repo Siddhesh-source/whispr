@@ -163,7 +163,12 @@ private fun SettingsContent(
                     onTypingIndicators,
                 )
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                SettingRow(stringResource(R.string.settings_privacy), stringResource(R.string.settings_privacy_body))
+                SettingRow(
+                    stringResource(R.string.settings_privacy),
+                    stringResource(
+                        if (state.keysRegistered) R.string.settings_privacy_body else R.string.settings_keys_pending,
+                    ),
+                )
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 SettingRow(stringResource(R.string.settings_version), state.version)
             }

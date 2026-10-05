@@ -227,9 +227,6 @@ class ContactsUiTest {
         }
         rule.onNodeWithContentDescription("Verified").assertIsDisplayed()
         rule.onNodeWithContentDescription("Verify safety number").assertIsDisplayed()
-        rule.onNodeWithText(
-            "Not end-to-end encrypted yet (development build). Don't send anything private.",
-        ).assertIsDisplayed()
     }
 
     @Test

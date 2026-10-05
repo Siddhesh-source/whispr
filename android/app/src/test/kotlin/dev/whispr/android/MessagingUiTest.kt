@@ -22,6 +22,7 @@ import dev.whispr.core.designsystem.theme.WhisprTheme
 import dev.whispr.domain.model.Contact
 import dev.whispr.domain.model.ConversationId
 import dev.whispr.domain.model.Message
+import dev.whispr.domain.model.MessageNotice
 import dev.whispr.domain.model.MessageStatus
 import dev.whispr.domain.model.UserId
 import java.time.Instant
@@ -149,13 +150,27 @@ class MessagingUiTest {
     }
 
     @Test
-    fun chatEmptyShowsInputAndEncryptionNotice() {
+    fun chatEmptyShowsInputAndNoEncryptionWarning() {
         chat(ChatUiState(peerName = "Bob", content = ChatContent.Messages(emptyList())))
         rule.onNodeWithText("Say hello").assertIsDisplayed()
-        rule.onNodeWithText(
-            "Not end-to-end encrypted yet (development build). Don't send anything private.",
-        ).assertIsDisplayed()
+        rule.onNodeWithText("Not end-to-end encrypted", substring = true).assertDoesNotExist()
         rule.onNodeWithContentDescription("Send message").assertIsNotEnabled()
+    }
+
+    @Test
+    fun chatShowsNoticeInPlaceOfAnUndecryptableMessage() {
+        val pending = msg("p", false, "").copy(notice = MessageNotice.Pending)
+        val held = msg("h", false, "").copy(notice = MessageNotice.Held)
+        chat(ChatUiState(peerName = "Bob", content = ChatContent.Messages(group(listOf(pending, held)))))
+        rule.onNodeWithContentDescription(
+            "Couldn't decrypt this message. Asked the sender to resend.",
+            substring = true,
+        )
+            .assertExists()
+        rule.onNodeWithContentDescription(
+            "Held: safety number changed. Review to read.",
+            substring = true,
+        ).assertExists()
     }
 
     @Test

@@ -126,4 +126,10 @@ class ScreensTest {
         rule.onNodeWithText("Offline").assertIsDisplayed()
         rule.onNodeWithContentDescription("Navigate back").assertIsDisplayed()
     }
+
+    @Test
+    fun settingsWarnsWhileKeysAreNotRegistered() {
+        settings(SettingsUiState.Content("Ada", null, "u", ConnectionStatus.Active, "0.1.0", keysRegistered = false))
+        rule.onNodeWithText("Encryption keys not set up yet, retrying", substring = true).assertExists()
+    }
 }

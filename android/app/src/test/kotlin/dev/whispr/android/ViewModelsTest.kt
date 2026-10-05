@@ -138,7 +138,8 @@ class ViewModelsTest {
         accounts.state.value = registered
         auth.session.value = SessionState.Active(Instant.MAX)
         val settings = FakeSettings()
-        val vm = SettingsViewModel(accounts, auth, connectivity, settings)
+        val encryption = FakeEncryption()
+        val vm = SettingsViewModel(accounts, auth, connectivity, settings, encryption)
         vm.state.test {
             val content = awaitItem() as SettingsUiState.Content
             assertEquals(registered.userId!!.value, content.userId)
@@ -148,6 +149,8 @@ class ViewModelsTest {
             assertFalse("privacy toggles default off", content.readReceipts || content.typingIndicators)
             vm.setReadReceipts(true)
             assertTrue((awaitItem() as SettingsUiState.Content).readReceipts)
+            encryption.registered.value = false
+            assertFalse((awaitItem() as SettingsUiState.Content).keysRegistered)
         }
     }
 

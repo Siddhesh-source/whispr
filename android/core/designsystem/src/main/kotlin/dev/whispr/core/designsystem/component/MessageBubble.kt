@@ -24,6 +24,7 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
+import androidx.compose.ui.text.font.FontStyle
 import dev.whispr.core.designsystem.R
 import dev.whispr.core.designsystem.icon.WhisprIcons
 import dev.whispr.core.designsystem.theme.WhisprTheme
@@ -42,6 +43,7 @@ enum class DeliveryStatus { Sending, Sent, Delivered, Read, Failed }
  *
  * @param time a pre-formatted, localized time string.
  * @param senderName announced for incoming messages (group chats need it).
+ * @param notice true when [text] is a system notice standing in for the message (shown in italics).
  */
 @Composable
 fun MessageBubble(
@@ -53,6 +55,7 @@ fun MessageBubble(
     groupPosition: BubbleGroupPosition = BubbleGroupPosition.Single,
     status: DeliveryStatus? = null,
     onRetry: (() -> Unit)? = null,
+    notice: Boolean = false,
 ) {
     val outgoing = direction == BubbleDirection.Outgoing
     val failed = outgoing && status == DeliveryStatus.Failed
@@ -109,7 +112,11 @@ fun MessageBubble(
                 Column(
                     Modifier.padding(horizontal = WhisprTheme.spacing.md, vertical = WhisprTheme.spacing.sm),
                 ) {
-                    Text(text = text, style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        text = text,
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontStyle = if (notice) FontStyle.Italic else null,
+                    )
                     Row(
                         Modifier.align(Alignment.End).padding(top = WhisprTheme.spacing.xxs),
                         verticalAlignment = Alignment.CenterVertically,

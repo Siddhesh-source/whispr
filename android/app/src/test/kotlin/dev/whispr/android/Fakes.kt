@@ -149,3 +149,8 @@ class FakeSettings : dev.whispr.domain.repository.SettingsRepository {
         privacy.value = privacy.value.copy(typingIndicators = enabled)
     }
 }
+
+class FakeEncryption : dev.whispr.domain.repository.EncryptionRepository {
+    val registered = MutableStateFlow(true)
+    override fun observeKeysRegistered() = registered
+}

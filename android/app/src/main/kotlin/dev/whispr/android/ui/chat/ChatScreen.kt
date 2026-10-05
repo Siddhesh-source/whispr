@@ -38,13 +38,13 @@ import dev.whispr.core.designsystem.component.ErrorState
 import dev.whispr.core.designsystem.component.LoadingState
 import dev.whispr.core.designsystem.component.MessageBubble
 import dev.whispr.core.designsystem.component.MessageInputBar
-import dev.whispr.core.designsystem.component.NoticeBanner
 import dev.whispr.core.designsystem.component.OfflineBanner
 import dev.whispr.core.designsystem.component.WarningCard
 import dev.whispr.core.designsystem.component.WhisprPrimaryButton
 import dev.whispr.core.designsystem.component.WhisprTopBar
 import dev.whispr.core.designsystem.icon.WhisprIcons
 import dev.whispr.core.designsystem.theme.WhisprTheme
+import dev.whispr.domain.model.MessageNotice
 import dev.whispr.domain.model.MessageStatus
 import dev.whispr.domain.model.TrustState
 
@@ -103,12 +103,6 @@ fun ChatScreen(
         },
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).imePadding()) {
-            // Phase 2 only: payloads are not yet encrypted. Removed in Phase 4.
-            NoticeBanner(
-                visible = true,
-                message = stringResource(R.string.chat_not_encrypted),
-                icon = WhisprIcons.Unlocked,
-            )
             OfflineBanner(visible = state.offline, message = stringResource(R.string.chat_offline))
             Box(Modifier.weight(1f)) {
                 when (val content = state.content) {
@@ -167,13 +161,14 @@ private fun MessageList(items: List<BubbleItem>, peerName: String, onRetry: (Str
         items(items, key = { it.message.id }) { item ->
             val m = item.message
             MessageBubble(
-                text = m.text,
+                text = m.notice?.let { stringResource(it.labelRes()) } ?: m.text,
                 time = formatTime(m.timestamp),
                 direction = if (m.outgoing) BubbleDirection.Outgoing else BubbleDirection.Incoming,
                 senderName = if (m.outgoing) null else peerName,
                 groupPosition = item.position,
                 status = m.status?.toDeliveryStatus(),
                 onRetry = { onRetry(m.id) },
+                notice = m.notice != null,
             )
         }
     }
@@ -205,6 +200,13 @@ private fun RequestBar(name: String, onAccept: () -> Unit, onDecline: () -> Unit
             }
         }
     }
+}
+
+private fun MessageNotice.labelRes() = when (this) {
+    MessageNotice.Pending -> R.string.chat_notice_pending
+    MessageNotice.Waiting -> R.string.chat_notice_waiting
+    MessageNotice.Unrecoverable -> R.string.chat_notice_unrecoverable
+    MessageNotice.Held -> R.string.chat_notice_held
 }
 
 private fun MessageStatus.toDeliveryStatus() = when (this) {

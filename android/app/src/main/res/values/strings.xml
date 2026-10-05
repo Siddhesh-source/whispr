@@ -40,7 +40,8 @@
     <string name="settings_connection_unavailable">Not signed in</string>
     <string name="settings_version">Version</string>
     <string name="settings_privacy">Privacy</string>
-    <string name="settings_privacy_body">Your identity key is created on this device and never leaves it. Your photo is never uploaded. Messages are not yet end-to-end encrypted in this development build; encryption with the Signal protocol is coming.</string>
+    <string name="settings_keys_pending">Encryption keys not set up yet, retrying. Nobody can start a new chat with you until this finishes.</string>
+    <string name="settings_privacy_body">Messages are end-to-end encrypted with the Signal protocol. Your identity key is created on this device and never leaves it. Your photo is never uploaded.</string>
     <string name="settings_error_title">Couldn\'t load your profile</string>
     <string name="settings_error_message">Your local data could not be read.</string>
     <string name="settings_error_action">Go back</string>
@@ -62,7 +63,10 @@
     <string name="chat_missing_title">Contact not found</string>
     <string name="chat_missing_message">This conversation is no longer available.</string>
     <string name="chat_typing">typing…</string>
-    <string name="chat_not_encrypted">Not end-to-end encrypted yet (development build). Don\'t send anything private.</string>
+    <string name="chat_notice_pending">Couldn\'t decrypt this message. Asked the sender to resend.</string>
+    <string name="chat_notice_waiting">Couldn\'t decrypt this message. Will retry when possible.</string>
+    <string name="chat_notice_unrecoverable">This message couldn\'t be recovered.</string>
+    <string name="chat_notice_held">Held: safety number changed. Review to read.</string>
     <string name="chat_offline">You\'re offline. Messages will send when you reconnect.</string>
 
     <!-- Settings additions -->
