@@ -43,7 +43,13 @@ class MediaPreparerTest {
     fun imagesLoseLocationAndCameraMetadata() = runTest {
         val file = photoWithGps()
         val result = AndroidMediaPreparer(context.contentResolver)
-            .prepare(MediaSource(android.net.Uri.fromFile(file).toString(), AttachmentKind.Image, fileName = "IMG_secret.jpg"))
+            .prepare(
+                MediaSource(
+                    android.net.Uri.fromFile(file).toString(),
+                    AttachmentKind.Image,
+                    fileName = "IMG_secret.jpg",
+                ),
+            )
         val media = (result as Prepared.Ok).media
         val exif = ExifInterface(ByteArrayInputStream(media.bytes))
         assertNull("GPS survived re-encoding", exif.latLong)
