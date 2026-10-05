@@ -76,6 +76,10 @@ class LiveMessagingTest {
         val auth = SessionAuthRepository(AuthApi(client, ServerConfig(url)), identity, accounts)
         private val api = WhisprApi(client, ServerConfig(url), auth)
         private val crypto = DeviceCrypto(db, client, url, auth, identity) { id.value }
+
+        /** True once this device's prekeys are on the server (others can encrypt to it). */
+        suspend fun keysPublished() =
+            ((crypto.keys.counts() as? dev.whispr.data.network.ApiResult.Success)?.body?.oneTime ?: 0) > 0
         val contacts = RoomContactsRepository(db, api, accounts, identity, allowInsecureLoopback = true) {
             engine.onKeyChangeAcknowledged(it)
         }
@@ -97,7 +101,8 @@ class LiveMessagingTest {
             scope,
             crypto.crypto,
             crypto.maintainer,
-            EngineTimings(backoffBaseMs = 100, backoffMaxMs = 500),
+            // Short lane retries: a peer may upload its keys a moment after we first ask for them.
+            EngineTimings(backoffBaseMs = 100, backoffMaxMs = 500, noKeysRetryMs = 500, parkRetryMs = 500),
         ).also { it.setForeground(true) }
 
         private fun repoFor(e: MessagingEngine) =
@@ -138,7 +143,11 @@ class LiveMessagingTest {
             check(alice.contacts.addById(bob.id.value) is AddContactResult.Added)
             val conversation = ConversationId.direct(alice.id, bob.id)
 
-            // Bob is offline. Alice sends a burst.
+            // Bob installs the app (publishing his keys), then goes offline. Alice sends a burst.
+            // (With end-to-end encryption nobody can write to an account that never published keys.)
+            bob.goOnline()
+            eventually("bob published keys") { bob.keysPublished() }
+            bob.restart()
             alice.goOnline()
             val texts = (1..10).map { "offline-$it" }
             texts.forEach { alice.repo.sendText(bob.id, it) }
