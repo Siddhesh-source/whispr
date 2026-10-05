@@ -92,6 +92,8 @@ class KeystoreAndDatabaseTest {
         val preKey = ECKeyPair.generate()
         val signed = ECKeyPair.generate()
         val marker = "whispr-at-rest-marker-" + UUID.randomUUID()
+        val groupName = "whispr-group-name-" + UUID.randomUUID()
+        val mediaKey = ByteArray(32) { (it * 7 + 3).toByte() }
         db.runInTransaction {
             store.storePreKey(1, PreKeyRecord(1, preKey))
             store.storeSignedPreKey(
@@ -109,6 +111,25 @@ class KeystoreAndDatabaseTest {
                     status = null,
                 ),
             )
+            db.groupDao().putGroup(
+                dev.whispr.data.db.GroupEntity(
+                    groupId = "g",
+                    name = groupName,
+                    avatar = null,
+                    revision = 1,
+                    revisionAuthor = "p",
+                    status = "Active",
+                    myDistributionId = UUID.randomUUID().toString(),
+                    createdAt = 0,
+                ),
+            )
+            db.groupDao().putAttachment(
+                dev.whispr.data.db.AttachmentEntity(
+                    messageRow = 1, remoteId = "r", key = mediaKey, digest = ByteArray(32), size = 1,
+                    contentType = "image/jpeg", kind = "Image", fileName = null, width = null, height = null,
+                    durationMs = null, thumbnail = null, blobPath = null, state = "Remote",
+                ),
+            )
         }
         db.close()
 
@@ -120,6 +141,8 @@ class KeystoreAndDatabaseTest {
         val text = String(bytes, Charsets.ISO_8859_1)
         assertFalse("SQLite header found: file is not encrypted", text.startsWith("SQLite format 3"))
         assertFalse("message text leaked", text.contains(marker))
+        assertFalse("group name leaked", text.contains(groupName))
+        assertFalse("attachment key leaked", text.contains(String(mediaKey, Charsets.ISO_8859_1)))
         for ((what, secret) in listOf("one-time prekey" to preKey, "signed prekey" to signed)) {
             assertFalse(
                 "$what private key leaked",
