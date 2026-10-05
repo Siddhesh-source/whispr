@@ -1,9 +1,18 @@
 package dev.whispr.data.messaging
 
 import dev.whispr.data.auth.TokenSource
-import dev.whispr.data.db.ContactEntity
-import dev.whispr.data.db.MessageEntity
+import dev.whispr.data.crypto.EncryptResult
+import dev.whispr.data.crypto.ParkReason
+import dev.whispr.data.crypto.PreKeyMaintainer
+import dev.whispr.data.crypto.SessionCrypto
+import dev.whispr.data.crypto.SessionStatus
+import dev.whispr.data.db.OutboxEntity
+import dev.whispr.data.db.ParkedRecipientEntity
+import dev.whispr.data.db.SentEnvelopeEntity
 import dev.whispr.data.db.WhisprDatabase
+import dev.whispr.data.messaging.IncomingPipeline.Companion.isResend
+import dev.whispr.data.messaging.IncomingPipeline.Companion.kind
+import dev.whispr.data.messaging.IncomingPipeline.Companion.originalId
 import dev.whispr.data.network.ApiResult
 import dev.whispr.data.network.WhisprApi
 import dev.whispr.domain.model.ConnectionState
@@ -14,6 +23,7 @@ import dev.whispr.domain.repository.ConnectivityRepository
 import java.time.Instant
 import java.util.Base64
 import java.util.concurrent.TimeUnit
+import kotlin.coroutines.cancellation.CancellationException
 import kotlin.random.Random
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -29,7 +39,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.distinctUntilChangedBy
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -47,7 +56,6 @@ import okhttp3.Request
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
-import org.signal.libsignal.protocol.IdentityKey
 
 /** A newly received message, for local notifications. */
 data class IncomingMessage(val conversationId: ConversationId, val senderName: String, val text: String)
@@ -60,15 +68,25 @@ data class EngineTimings(
     val backoffMaxMs: Long = 30_000,
     val wakeWindowMs: Long = 30_000,
     val typingVisibleMs: Long = 6_000,
+    /** How long a lane waits before retrying after a transient failure. */
+    val parkRetryMs: Long = 30_000,
+    /** How long a lane waits for a peer without keys before checking again. */
+    val noKeysRetryMs: Long = 5 * 60_000,
+    /** How often pending session resets are re-examined while connected. */
+    val resetTickMs: Long = 5 * 60_000,
 )
 
 /**
  * Owns the WebSocket. Keeps a connection while it is wanted (app in
  * foreground, unsent outbox entries, or a push wake-up window), reconnects
- * with exponential backoff, drains the outbox in order, and writes incoming
- * envelopes to the database *before* acknowledging them, so a crash at any
- * point leads to redelivery rather than loss, and redelivery is deduplicated
- * by message ID.
+ * with exponential backoff, and acknowledges incoming envelopes only after
+ * everything they produced is committed, so a crash at any point leads to
+ * redelivery rather than loss.
+ *
+ * Every payload is encrypted with libsignal ([SessionCrypto]): outgoing
+ * entries are encrypted once, when they reach the head of their recipient's
+ * lane, and resent byte-identically. A recipient whose lane is blocked (no
+ * keys yet, key change awaiting acknowledgement) never stalls other chats.
  */
 class MessagingEngine(
     private val db: WhisprDatabase,
@@ -78,8 +96,11 @@ class MessagingEngine(
     private val accounts: AccountRepository,
     private val connectivity: ConnectivityRepository,
     private val scope: CoroutineScope,
+    private val crypto: SessionCrypto,
+    private val maintainer: PreKeyMaintainer,
     private val timings: EngineTimings = EngineTimings(),
     private val random: Random = Random.Default,
+    private val clock: () -> Long = System::currentTimeMillis,
 ) {
     private val wsClient = baseClient.newBuilder()
         .pingInterval(20, TimeUnit.SECONDS) // client-side heartbeat
@@ -89,6 +110,7 @@ class MessagingEngine(
         ignoreUnknownKeys = true
         encodeDefaults = true // frames carry their "type" as a default value
     }
+    private val dao get() = db.cryptoDao()
 
     private val state = MutableStateFlow(ConnectionState.Offline)
     val connection: StateFlow<ConnectionState> = state.asStateFlow()
@@ -104,7 +126,38 @@ class MessagingEngine(
     private val wakeActive = MutableStateFlow(false)
     private var wakeJob: Job? = null
 
+    /** Nudges the outbox pump (new entry, lane unparked) and the reset worker. */
+    private val outboxSignal = Channel<Unit>(Channel.CONFLATED)
+    private val resetSignal = Channel<Unit>(Channel.CONFLATED)
+
     @Volatile private var live: LiveSession? = null
+
+    val resets = ResetCoordinator(db, crypto, clock)
+
+    val pipeline = IncomingPipeline(
+        db,
+        crypto,
+        lookup = { (api.lookupUser(it) as? ApiResult.Success)?.body },
+        events = object : PipelineEvents {
+            override fun onText(conversation: ConversationId, senderName: String, body: String) {
+                incomingFlow.tryEmit(IncomingMessage(conversation, senderName, body))
+                typingUntil.update { it - conversation.value }
+            }
+
+            override fun onTyping(conversation: ConversationId) {
+                typingUntil.update { it + (conversation.value to clock() + timings.typingVisibleMs) }
+            }
+
+            override fun onOneTimeKeyUsed() {
+                scope.launch { maintainer.maintain(force = true) }
+            }
+
+            override fun onDecryptFailure() {
+                resetSignal.trySend(Unit)
+            }
+        },
+        clock = clock,
+    )
 
     fun setForeground(value: Boolean) {
         foreground.value = value
@@ -120,9 +173,23 @@ class MessagingEngine(
         }
     }
 
-    /** Best effort; dropped if not connected. */
+    /** Best effort; dropped if not connected or if there is no session yet. */
     fun sendTransient(peer: UserId, conversation: ConversationId, payload: Payload) {
-        live?.sendTransient(peer.value, conversation.value, PayloadCodec.encode(payload))
+        val session = live ?: return
+        scope.launch {
+            crypto.encryptTransient(peer.value, PayloadCodec.encode(payload))?.let {
+                session.sendTransient(peer.value, conversation.value, it)
+            }
+        }
+    }
+
+    /** The user acknowledged [peer]'s new key: resume their lane and show what we held. */
+    suspend fun onKeyChangeAcknowledged(peer: UserId) {
+        crypto.onKeyChangeAcknowledged(peer.value)
+        crypto.transaction { dao.unpark(peer.value) }
+        accounts.getAccount()?.userId?.let { pipeline.releaseHeld(it.value, peer.value) }
+        outboxSignal.trySend(Unit)
+        resetSignal.trySend(Unit)
     }
 
     fun start() {
@@ -148,6 +215,8 @@ class MessagingEngine(
                 }
             }
         }
+        // Wake the pump whenever the outbox changes.
+        scope.launch { db.outboxDao().observeCount().collect { outboxSignal.trySend(Unit) } }
     }
 
     internal fun backoffDelay(attempt: Int): Long {
@@ -173,13 +242,15 @@ class MessagingEngine(
             live = session
             state.value = ConnectionState.Connected
             val pump = launch { pumpOutbox(session) }
+            val upkeep = launch { upkeep(me.value) }
             for (event in events) {
                 when (event) {
-                    is WsEvent.Text -> if (!handleFrame(session, me, event.text)) break
+                    is WsEvent.Text -> if (!handleFrame(session, me.value, event.text)) break
                     else -> break
                 }
             }
             pump.cancel()
+            upkeep.cancel()
             true
         } finally {
             live = null
@@ -187,146 +258,153 @@ class MessagingEngine(
         }
     }
 
-    /** Sends the outbox head; resends it until the server accepts or rejects it. */
+    /** Key maintenance and session resets while connected. */
+    private suspend fun upkeep(me: String) {
+        maintainer.maintain()
+        resetSignal.trySend(Unit)
+        while (true) {
+            withTimeoutOrNull(timings.resetTickMs) { resetSignal.receive() }
+            try {
+                resets.run(me)
+            } catch (c: CancellationException) {
+                throw c
+            } catch (_: Exception) {
+                // Retried on the next tick; resets are durable.
+            }
+            outboxSignal.trySend(Unit)
+        }
+    }
+
+    /**
+     * Sends the head of the first unblocked lane, resending it until the
+     * server accepts or rejects it. One envelope is in flight at a time.
+     */
     private suspend fun pumpOutbox(session: LiveSession) {
-        db.outboxDao().observeHead().distinctUntilChangedBy { it?.messageId }.collectLatest { head ->
-            if (head == null) return@collectLatest
-            while (true) {
-                session.send(
-                    SendFrame(
-                        id = head.messageId,
-                        conversationId = head.conversationId,
-                        recipientId = head.recipientId,
-                        clientTs = Instant.ofEpochMilli(head.clientTs).toString(),
-                        payload = Base64.getEncoder().encodeToString(head.payload),
-                    ),
-                )
-                // Duplicates are harmless: the server deduplicates by message ID.
-                delay(timings.resendAfterMs)
+        while (true) {
+            val now = clock()
+            val head = crypto.transaction { dao.outboxHead(now) }
+            if (head == null) {
+                val next = crypto.transaction { dao.nextUnpark(now) }
+                withTimeoutOrNull(
+                    next?.let {
+                        (it - now).coerceAtLeast(1)
+                    } ?: Long.MAX_VALUE,
+                ) { outboxSignal.receive() }
+                continue
+            }
+            val wire = head.ciphertext ?: prepare(head) ?: continue
+            session.send(
+                SendFrame(
+                    id = head.messageId,
+                    conversationId = head.conversationId,
+                    recipientId = head.recipientId,
+                    clientTs = Instant.ofEpochMilli(head.clientTs).toString(),
+                    payload = Base64.getEncoder().encodeToString(wire),
+                ),
+            )
+            // Wait for accepted/rejected to remove it, or resend after a while.
+            // Duplicates are harmless: the server deduplicates by message ID.
+            withTimeoutOrNull(timings.resendAfterMs) {
+                while (crypto.transaction { dao.inOutbox(head.messageId) }) outboxSignal.receive()
             }
         }
     }
 
+    /** Encrypts the lane head once; on a blocked lane parks it and returns null. */
+    private suspend fun prepare(head: OutboxEntity): ByteArray? {
+        val peer = head.recipientId
+        when (val s = crypto.ensureSession(peer)) {
+            is SessionStatus.Blocked -> return park(head, s.reason)
+            SessionStatus.Ready -> Unit
+        }
+        val payload = PayloadCodec.decode(head.payload)
+        val result = crypto.encrypt(peer, head.payload) { wire ->
+            dao.setOutboxCiphertext(head.messageId, wire)
+            dao.putSent(
+                SentEnvelopeEntity(
+                    transportId = head.messageId,
+                    recipientId = peer,
+                    mid = payload?.originalId(head.messageId),
+                    kind = payload?.kind() ?: IncomingPipeline.KIND_CONTROL,
+                    plaintext = head.payload.takeIf { payload?.kind() != IncomingPipeline.KIND_CONTROL },
+                    sentAt = clock(),
+                    autoResent = payload?.isResend() == true,
+                ),
+            )
+            dao.unpark(peer)
+            wire
+        }
+        return when (result) {
+            is EncryptResult.Ok -> result.value
+            is EncryptResult.Blocked -> park(head, result.reason)
+        }
+    }
+
+    private suspend fun park(head: OutboxEntity, reason: ParkReason): ByteArray? {
+        if (reason == ParkReason.UnknownUser) {
+            db.messagingTransactions().rejected(head.messageId)
+            return null
+        }
+        val retryAt = when (reason) {
+            ParkReason.KeyChanged -> Long.MAX_VALUE // until the user acknowledges
+            ParkReason.NoKeys -> clock() + timings.noKeysRetryMs
+            else -> clock() + timings.parkRetryMs
+        }
+        crypto.transaction { dao.park(ParkedRecipientEntity(head.recipientId, reason.name, retryAt)) }
+        return null
+    }
+
     /** Returns false if the connection should be dropped. */
-    private suspend fun handleFrame(session: LiveSession, me: UserId, text: String): Boolean {
+    private suspend fun handleFrame(session: LiveSession, me: String, text: String): Boolean {
         val frame = runCatching { json.parseToJsonElement(text).jsonObject }.getOrNull() ?: return false
         val id = frame.str("id")
         when (frame.str("type")) {
-            "accepted" -> id?.let { db.messagingTransactions().accepted(it) }
-            "rejected" -> if (id != null && frame.str("code") !in RETRYABLE) db.messagingTransactions().rejected(id)
+            "accepted" -> id?.let {
+                db.messagingTransactions().accepted(it)
+                outboxSignal.trySend(Unit)
+            }
+            "rejected" -> if (id != null && frame.str("code") !in RETRYABLE) {
+                db.messagingTransactions().rejected(id)
+                outboxSignal.trySend(Unit)
+            }
             "envelope" -> {
                 val seq = frame["seq"]?.jsonPrimitive?.longOrNull ?: return false
-                storeEnvelope(me, frame)
+                val envelope = IncomingEnvelope(
+                    seq = seq,
+                    id = id ?: return false,
+                    sender = frame.str("sender_id") ?: return false,
+                    kind = frame.str("kind") ?: IncomingPipeline.KIND_ENVELOPE,
+                    refId = frame.str("ref_id"),
+                    serverTs =
+                    frame.str("server_ts")?.let { runCatching { Instant.parse(it).toEpochMilli() }.getOrNull() }
+                        ?: clock(),
+                    payload = frame.bytes("payload") ?: ByteArray(0),
+                )
+                val ack = try {
+                    pipeline.process(me, envelope)
+                } catch (c: CancellationException) {
+                    throw c
+                } catch (_: Exception) {
+                    false // not stored: drop the connection; the envelope is redelivered
+                }
+                if (!ack) return false
                 // Only after the write committed: a crash before this line
-                // means redelivery, which the unique message ID absorbs.
+                // means redelivery, which dedup absorbs.
                 session.ack(seq)
             }
-            "transient" -> handleTransient(me, frame)
+            "transient" -> {
+                val sender = frame.str("sender_id")
+                val payload = frame.bytes("payload")
+                if (sender != null && payload != null) pipeline.processTransient(me, sender, payload)
+            }
         }
         return true
     }
 
-    private suspend fun storeEnvelope(me: UserId, frame: JsonObject) {
-        val sender = frame.str("sender_id") ?: return
-        when (frame.str("kind")) {
-            "delivered" -> frame.str("ref_id")?.let { db.messageDao().markDelivered(it) }
-            "envelope" -> when (val payload = decodePayload(frame)) {
-                is Payload.Text -> {
-                    val messageId = frame.str("id") ?: return
-                    // Never trust the client-supplied conversation ID for 1:1
-                    // chats: derive it, so a sender cannot inject messages
-                    // into someone else's conversation.
-                    val conversation = ConversationId.direct(me, UserId(sender))
-                    val contact = ensureContact(sender)
-                    val serverTs =
-                        frame.str("server_ts")?.let { runCatching { Instant.parse(it) }.getOrNull() } ?: Instant.now()
-                    val inserted = db.messageDao().insert(
-                        MessageEntity(
-                            messageId = messageId,
-                            conversationId = conversation.value,
-                            peerId = sender,
-                            outgoing = false,
-                            body = payload.body,
-                            timestamp = serverTs.toEpochMilli(),
-                            status = null,
-                        ),
-                    )
-                    if (inserted !=
-                        -1L
-                    ) {
-                        incomingFlow.tryEmit(IncomingMessage(conversation, contact.displayName, payload.body))
-                    }
-                    typingUntil.update { it - conversation.value }
-                }
-                is Payload.Read -> db.messageDao().markReadByPeer(payload.ids, sender)
-                is Payload.ContactRequest -> handleContactRequest(sender, payload)
-                Payload.Typing, null -> Unit // unknown or misplaced: acknowledge and drop
-            }
-        }
-    }
-
-    private fun handleTransient(me: UserId, frame: JsonObject) {
-        val sender = frame.str("sender_id") ?: return
-        if (decodePayload(frame) != Payload.Typing) return
-        val conversation = ConversationId.direct(me, UserId(sender))
-        typingUntil.update { it + (conversation.value to System.currentTimeMillis() + timings.typingVisibleMs) }
-    }
-
-    /**
-     * Someone added us. A new requester is stored as a request with the key
-     * they sent, cross-checked against the server; any difference, or a
-     * difference from a key we already pinned, is flagged, never adopted.
-     */
-    private suspend fun handleContactRequest(sender: String, request: Payload.ContactRequest) {
-        val key = runCatching { Base64.getDecoder().decode(request.key) }.getOrNull()
-            ?.takeIf { runCatching { IdentityKey(it) }.isSuccess } ?: return
-        val existing = db.contactDao().get(sender)
-        if (existing != null) {
-            when {
-                existing.identityKey.isEmpty() -> db.contactDao().upsert(existing.copy(identityKey = key))
-                !existing.identityKey.contentEquals(key) -> db.contactDao().flagKeyChange(sender, key)
-            }
-            return
-        }
-        val server = (api.lookupUser(sender) as? ApiResult.Success)?.body
-        db.contactDao().upsert(
-            ContactEntity(
-                userId = sender,
-                // Prefer the server-validated name over the one in the payload.
-                displayName = server?.displayName ?: request.name.take(MAX_NAME).ifBlank { UNKNOWN_CONTACT },
-                identityKey = key,
-                addedAt = System.currentTimeMillis(),
-                isRequest = true,
-            ),
-        )
-        val serverKey = server?.identityKey?.let { runCatching { Base64.getDecoder().decode(it) }.getOrNull() }
-        if (serverKey != null && !serverKey.contentEquals(key)) db.contactDao().flagKeyChange(sender, serverKey)
-    }
-
-    /**
-     * Messages from someone not yet added still arrive, as a message request.
-     * An existing contact is never modified here; its pinned key stays put.
-     */
-    private suspend fun ensureContact(userId: String): ContactEntity {
-        val existing = db.contactDao().get(userId)
-        if (existing != null && existing.identityKey.isNotEmpty()) return existing
-        val looked = (api.lookupUser(userId) as? ApiResult.Success)?.body
-        val contact = (
-            existing
-                ?: ContactEntity(userId, UNKNOWN_CONTACT, ByteArray(0), System.currentTimeMillis(), isRequest = true)
-            ).copy(
-            displayName = looked?.displayName ?: existing?.displayName ?: UNKNOWN_CONTACT,
-            identityKey = looked?.identityKey?.let { Base64.getDecoder().decode(it) } ?: ByteArray(0),
-        )
-        db.contactDao().upsert(contact)
-        return contact
-    }
-
-    private fun decodePayload(frame: JsonObject): Payload? = frame.str("payload")?.let {
-        runCatching { Base64.getDecoder().decode(it) }.getOrNull()
-    }?.let(PayloadCodec::decode)
-
     private fun JsonObject.str(key: String): String? = this[key]?.jsonPrimitive?.contentOrNull
+
+    private fun JsonObject.bytes(key: String): ByteArray? =
+        str(key)?.let { runCatching { Base64.getDecoder().decode(it) }.getOrNull() }
 
     private inner class LiveSession(private val ws: WebSocket) {
         fun send(frame: SendFrame) {
@@ -383,7 +461,6 @@ class MessagingEngine(
 
     companion object {
         const val UNKNOWN_CONTACT = "Unknown contact"
-        private const val MAX_NAME = 64
         private const val HTTP_UNAUTHORIZED = 401
         private const val MAX_SHIFT = 20
 

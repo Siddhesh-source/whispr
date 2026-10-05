@@ -16,7 +16,10 @@ import dev.whispr.data.auth.TokenSource
 import dev.whispr.data.connectivity.AndroidConnectivityRepository
 import dev.whispr.data.contacts.RoomContactsRepository
 import dev.whispr.data.crypto.AndroidKeystoreKeyWrapper
+import dev.whispr.data.crypto.PreKeyMaintainer
 import dev.whispr.data.crypto.SecretFileStore
+import dev.whispr.data.crypto.SessionCrypto
+import dev.whispr.data.crypto.SignalStore
 import dev.whispr.data.db.AccountDao
 import dev.whispr.data.db.DatabaseKey
 import dev.whispr.data.db.LazyKeyOpenHelperFactory
@@ -26,6 +29,7 @@ import dev.whispr.data.messaging.MessagingEngine
 import dev.whispr.data.messaging.RoomMessagingRepository
 import dev.whispr.data.messaging.RoomSettingsRepository
 import dev.whispr.data.network.AuthApi
+import dev.whispr.data.network.KeysApi
 import dev.whispr.data.network.ServerConfig
 import dev.whispr.data.network.WhisprApi
 import dev.whispr.data.profile.RoomProfileRepository
@@ -38,12 +42,14 @@ import dev.whispr.domain.repository.MessagingRepository
 import dev.whispr.domain.repository.ProfileRepository
 import dev.whispr.domain.repository.SettingsRepository
 import java.io.File
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import javax.inject.Qualifier
 import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.asCoroutineDispatcher
 import okhttp3.OkHttpClient
 
 @Qualifier
@@ -75,8 +81,10 @@ object DataModule {
         SecretFileStore(secretsDir(context), AndroidKeystoreKeyWrapper("whispr.database.wrap.v1"))
 
     @Provides @Singleton
-    fun identityRepository(@IdentityStore store: SecretFileStore): IdentityRepository =
-        LibsignalIdentityRepository(store, Dispatchers.IO)
+    fun libsignalIdentity(@IdentityStore store: SecretFileStore) = LibsignalIdentityRepository(store, Dispatchers.IO)
+
+    @Provides
+    fun identityRepository(impl: LibsignalIdentityRepository): IdentityRepository = impl
 
     @Provides @Singleton
     fun database(@ApplicationContext context: Context, @DatabaseKeyStore store: SecretFileStore): WhisprDatabase =
@@ -123,6 +131,28 @@ object DataModule {
     fun whisprApi(client: OkHttpClient, config: ServerConfig, tokens: TokenSource) = WhisprApi(client, config, tokens)
 
     @Provides @Singleton
+    fun keysApi(client: OkHttpClient, config: ServerConfig, tokens: TokenSource) = KeysApi(client, config, tokens)
+
+    /** All libsignal work runs on this one thread, so ratchet steps never interleave. */
+    @Provides @Singleton
+    fun signalStore(db: WhisprDatabase) = SignalStore(db.cryptoDao())
+
+    @Provides @Singleton
+    fun sessionCrypto(
+        db: WhisprDatabase,
+        store: SignalStore,
+        identity: LibsignalIdentityRepository,
+        keys: KeysApi,
+        accounts: AccountRepository,
+    ) = SessionCrypto(db, store, identity, { keys.bundle(it) }, cryptoDispatcher) {
+        accounts.getAccount()?.userId?.value ?: error("not registered")
+    }
+
+    @Provides @Singleton
+    fun preKeyMaintainer(db: WhisprDatabase, store: SignalStore, identity: LibsignalIdentityRepository, keys: KeysApi) =
+        PreKeyMaintainer(db, store, identity, keys, cryptoDispatcher)
+
+    @Provides @Singleton
     fun messagingEngine(
         db: WhisprDatabase,
         client: OkHttpClient,
@@ -130,6 +160,8 @@ object DataModule {
         tokens: TokenSource,
         accounts: AccountRepository,
         connectivity: ConnectivityRepository,
+        crypto: SessionCrypto,
+        maintainer: PreKeyMaintainer,
     ) = MessagingEngine(
         db,
         client,
@@ -138,6 +170,8 @@ object DataModule {
         accounts,
         connectivity,
         CoroutineScope(SupervisorJob() + Dispatchers.IO),
+        crypto,
+        maintainer,
     )
 
     @Provides @Singleton
@@ -158,7 +192,15 @@ object DataModule {
         accounts: AccountRepository,
         identity: IdentityRepository,
         @InsecureLoopbackAllowed allowInsecureLoopback: Boolean,
-    ): ContactsRepository = RoomContactsRepository(db, api, accounts, identity, allowInsecureLoopback)
+        engine: MessagingEngine,
+    ): ContactsRepository = RoomContactsRepository(
+        db,
+        api,
+        accounts,
+        identity,
+        allowInsecureLoopback,
+        onKeyAcknowledged = engine::onKeyChangeAcknowledged,
+    )
 
     @Provides @Singleton
     fun profileRepository(@ApplicationContext context: Context, db: WhisprDatabase, api: WhisprApi): ProfileRepository =
@@ -172,4 +214,8 @@ object DataModule {
     private fun secretsDir(context: Context) = File(context.noBackupFilesDir, "secrets")
 
     private const val TIMEOUT_SECONDS = 15L
+
+    private val cryptoDispatcher = Executors.newSingleThreadExecutor {
+        Thread(it, "whispr-crypto")
+    }.asCoroutineDispatcher()
 }

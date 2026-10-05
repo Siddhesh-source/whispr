@@ -43,6 +43,8 @@ class RoomContactsRepository(
     /** Debug builds talk to a loopback server over HTTP. */
     private val allowInsecureLoopback: Boolean,
     private val clock: () -> Long = System::currentTimeMillis,
+    /** Resumes encrypted messaging with the contact (unpark, release held messages). */
+    private val onKeyAcknowledged: suspend (UserId) -> Unit = {},
 ) : ContactsRepository {
 
     private val dao get() = db.contactDao()
@@ -165,7 +167,10 @@ class RoomContactsRepository(
         if (profile.displayName != contact.displayName) dao.setName(userId.value, profile.displayName)
     }
 
-    override suspend fun acknowledgeKeyChange(userId: UserId) = dao.acceptPendingKey(userId.value)
+    override suspend fun acknowledgeKeyChange(userId: UserId) {
+        dao.acceptPendingKey(userId.value)
+        onKeyAcknowledged(userId)
+    }
 
     override suspend fun safetyNumber(userId: UserId): SafetyNumber? {
         val contact =

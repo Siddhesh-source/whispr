@@ -241,4 +241,79 @@ interface CryptoDao {
     // Pending resets
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     fun queueReset(row: PendingResetEntity): Long
+
+    @Query("SELECT DISTINCT peerId FROM pending_resets WHERE state = 'queued'")
+    fun peersWithQueuedResets(): List<String>
+
+    @Query("SELECT transportId FROM pending_resets WHERE peerId = :peerId AND state = 'queued'")
+    fun queuedResets(peerId: String): List<String>
+
+    @Query(
+        """UPDATE pending_resets SET state = 'awaiting', attempts = attempts + 1, resetTransportId = :resetId, deliveredAt = NULL
+           WHERE peerId = :peerId AND transportId IN (:ids)""",
+    )
+    fun markAwaiting(peerId: String, ids: List<String>, resetId: String)
+
+    @Query("UPDATE pending_resets SET deliveredAt = :at WHERE resetTransportId = :resetId AND deliveredAt IS NULL")
+    fun resetDelivered(resetId: String, at: Long)
+
+    @Query(
+        "SELECT * FROM pending_resets WHERE state = 'awaiting' AND deliveredAt IS NOT NULL AND deliveredAt < :cutoff",
+    )
+    fun unansweredResets(cutoff: Long): List<PendingResetEntity>
+
+    @Query("SELECT * FROM pending_resets WHERE failedAt < :cutoff")
+    fun staleResets(cutoff: Long): List<PendingResetEntity>
+
+    @Query("UPDATE pending_resets SET state = 'queued' WHERE peerId = :peerId AND transportId = :transportId")
+    fun requeueReset(peerId: String, transportId: String)
+
+    @Query("DELETE FROM pending_resets WHERE peerId = :peerId AND transportId = :transportId")
+    fun resolveReset(peerId: String, transportId: String)
+
+    // Outbox lanes
+    @Query(
+        """SELECT * FROM outbox WHERE recipientId NOT IN
+             (SELECT recipientId FROM parked_recipients WHERE retryAt > :now)
+           ORDER BY seq LIMIT 1""",
+    )
+    fun outboxHead(now: Long): OutboxEntity?
+
+    @Query(
+        """SELECT MIN(retryAt) FROM parked_recipients
+           WHERE retryAt > :now AND recipientId IN (SELECT recipientId FROM outbox)""",
+    )
+    fun nextUnpark(now: Long): Long?
+
+    @Query("SELECT EXISTS(SELECT 1 FROM outbox WHERE messageId = :messageId)")
+    fun inOutbox(messageId: String): Boolean
+
+    @Upsert
+    fun park(row: ParkedRecipientEntity)
+
+    @Query("DELETE FROM parked_recipients WHERE recipientId = :recipientId")
+    fun unpark(recipientId: String)
+
+    @Query("SELECT * FROM parked_recipients WHERE recipientId = :recipientId")
+    fun parked(recipientId: String): ParkedRecipientEntity?
+
+    @Query("UPDATE messages SET status = 'Delivered' WHERE messageId = :messageId AND status IN ('Sending', 'Sent')")
+    fun markDelivered(messageId: String)
+
+    // Held envelopes
+    @Query("SELECT * FROM held_envelopes WHERE senderId = :senderId ORDER BY seq")
+    fun held(senderId: String): List<HeldEnvelopeEntity>
+
+    @Query("DELETE FROM held_envelopes WHERE senderId = :senderId AND transportId = :transportId")
+    fun releaseHeld(senderId: String, transportId: String)
+
+    @Query("SELECT * FROM held_envelopes WHERE receivedAt < :cutoff")
+    fun expiredHeld(cutoff: Long): List<HeldEnvelopeEntity>
+
+    // Retention
+    @Query("DELETE FROM seen_envelopes WHERE receivedAt < :cutoff")
+    fun purgeSeen(cutoff: Long)
+
+    @Query("DELETE FROM sent_envelopes WHERE sentAt < :cutoff")
+    fun purgeSent(cutoff: Long)
 }

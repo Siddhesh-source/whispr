@@ -72,6 +72,9 @@ enum class Placeholder {
 
     /** Gave up: the sender could not resend it or never answered. */
     Unrecoverable,
+
+    /** Held encrypted because the sender's safety number changed; shown after review. */
+    Held,
 }
 
 /**
@@ -108,6 +111,7 @@ data class ConversationRow(
     val body: String?,
     val timestamp: Long?,
     val status: String?,
+    val placeholder: String?,
     val unread: Int,
 )
 
@@ -158,7 +162,7 @@ interface MessageDao {
     @Query(
         """
         SELECT c.userId AS peerId, c.displayName, c.identityKey, c.trust, c.isRequest,
-               m.messageId, m.outgoing, m.body, m.timestamp, m.status,
+               m.messageId, m.outgoing, m.body, m.timestamp, m.status, m.placeholder,
                (SELECT COUNT(*) FROM messages u
                  WHERE u.peerId = c.userId AND u.outgoing = 0 AND u.readByMe = 0) AS unread
         FROM contacts c

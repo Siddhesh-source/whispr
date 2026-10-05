@@ -6,21 +6,29 @@ import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 
 /**
- * What clients put inside an envelope's opaque payload. The server never
- * sees this structure. In Phase 2 it is plaintext JSON; Phase 4 encrypts
- * these exact bytes with libsignal, so receipts and typing become invisible
- * to the server too.
+ * What clients put inside an envelope. These bytes are padded and encrypted
+ * with libsignal before they leave the device; the server never sees them.
+ *
+ * `replaces` is set only on an automatic resend after the peer could not
+ * decrypt the original: it names the failed envelope's transport ID.
  */
 @Serializable
 sealed interface Payload {
     @Serializable
     @SerialName("text")
-    data class Text(val body: String) : Payload
+    data class Text(
+        val body: String,
+        /** Logical message ID; equals the first transport ID and survives resends. */
+        val mid: String? = null,
+        /** Original send time (epoch ms), kept on resends. */
+        val ts: Long? = null,
+        val replaces: String? = null,
+    ) : Payload
 
     /** The recipient read these message IDs. Only sent if read receipts are enabled. */
     @Serializable
     @SerialName("read")
-    data class Read(val ids: List<String>) : Payload
+    data class Read(val ids: List<String>, val replaces: String? = null) : Payload
 
     /**
      * "I added you": sent after scanning someone's code or finding their
@@ -29,7 +37,26 @@ sealed interface Payload {
      */
     @Serializable
     @SerialName("contact_request")
-    data class ContactRequest(val name: String, val key: String) : Payload
+    data class ContactRequest(val name: String, val key: String, val replaces: String? = null) : Payload
+
+    /** "I could not decrypt these envelopes from you; please resend them." */
+    @Serializable
+    @SerialName("reset")
+    data class SessionReset(val failed: List<String>) : Payload
+
+    /**
+     * The answer to a [SessionReset]: which IDs were resent, which were
+     * control messages (nothing to show), and which can't be recovered.
+     * [aliases] maps a lost resend's ID to the original it replaced.
+     */
+    @Serializable
+    @SerialName("reset_done")
+    data class ResetDone(
+        val resent: List<String> = emptyList(),
+        val control: List<String> = emptyList(),
+        val lost: List<String> = emptyList(),
+        val aliases: Map<String, String> = emptyMap(),
+    ) : Payload
 
     /** Sent as a transient frame (never stored). Only if typing indicators are enabled. */
     @Serializable

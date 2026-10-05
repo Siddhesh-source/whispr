@@ -115,6 +115,9 @@ class SessionCrypto(
 
     suspend fun hasSession(peer: String): Boolean = onCrypto { store.containsSession(address(peer)) }
 
+    /** Runs [block] as one transaction on the crypto thread (serialized with all session work). */
+    suspend fun <T> transaction(block: () -> T): T = onCrypto { tx(block) }
+
     /**
      * Makes sure a sending session with [peer] exists, fetching a bundle if
      * not. With [rebuild] a fresh session replaces the current one (a reset);

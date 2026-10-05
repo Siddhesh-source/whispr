@@ -60,7 +60,8 @@ class ContactTrustTest {
 
     private val me = UserId(UUID.randomUUID().toString())
     private val peer = UserId(UUID.randomUUID().toString())
-    private val peerKey = IdentityKeyPair.generate().publicKey.serialize()
+    private val peerPair = IdentityKeyPair.generate()
+    private val peerKey = peerPair.publicKey.serialize()
 
     private val server = MockWebServer()
     private val gateway = FakeGateway()
@@ -81,6 +82,7 @@ class ContactTrustTest {
         db.accountDao().upsert(AccountEntity(userId = me.value, displayName = "Me", avatarPath = null))
         gateway.users[peer.value] = "Peer"
         gateway.keys[peer.value] = peerKey
+        gateway.peer(peer.value, "Peer", peerPair)
         val client = OkHttpClient()
         val tokens = object : TokenSource {
             override suspend fun bearerToken() = "token"
@@ -101,7 +103,13 @@ class ContactTrustTest {
             override suspend fun markRegistered(userId: UserId) = Unit
         }
         identity = LibsignalIdentityRepository(SecretFileStore(tmp.root, SoftwareKeyWrapper()), Dispatchers.Unconfined)
-        contacts = RoomContactsRepository(db, api, accounts, identity, allowInsecureLoopback = true)
+        gateway.registerSelf(me.value, identity.getOrCreatePublicKey())
+        val url = server.url("/").toString()
+        val crypto = DeviceCrypto(db, client, url, tokens, identity) { me.value }
+        lateinit var engineRef: MessagingEngine
+        contacts = RoomContactsRepository(db, api, accounts, identity, allowInsecureLoopback = true) {
+            engineRef.onKeyChangeAcknowledged(it)
+        }
         val engine = MessagingEngine(
             db,
             client,
@@ -112,8 +120,11 @@ class ContactTrustTest {
                 override val isOnline = flowOf(true)
             },
             scope,
+            crypto.crypto,
+            crypto.maintainer,
             EngineTimings(resendAfterMs = 500, backoffBaseMs = 50, backoffMaxMs = 200),
         ).also {
+            engineRef = it
             it.setForeground(true)
             it.start()
         }
@@ -124,6 +135,7 @@ class ContactTrustTest {
     fun tearDown() {
         scope.cancel()
         server.close()
+        gateway.closePeers()
         db.close()
     }
 
@@ -141,7 +153,7 @@ class ContactTrustTest {
 
         eventually("request sent") { gateway.sends.any { it.s("recipient_id") == peer.value } }
         val request = PayloadCodec.decode(
-            Base64.getDecoder().decode(gateway.sends.first().s("payload")),
+            gateway.payloadText(gateway.sends.first()).toByteArray(),
         ) as Payload.ContactRequest
         assertArrayEquals(identity.getOrCreatePublicKey(), Base64.getDecoder().decode(request.key))
     }

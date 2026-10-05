@@ -10,6 +10,7 @@ import dev.whispr.domain.model.Contact
 import dev.whispr.domain.model.ConversationId
 import dev.whispr.domain.model.ConversationSummary
 import dev.whispr.domain.model.Message
+import dev.whispr.domain.model.MessageNotice
 import dev.whispr.domain.model.MessageStatus
 import dev.whispr.domain.model.TrustState
 import dev.whispr.domain.model.UserId
@@ -76,7 +77,7 @@ class RoomMessagingRepository(
                 messageId = id,
                 conversationId = conversation.value,
                 recipientId = peer.value,
-                payload = PayloadCodec.encode(Payload.Text(text)),
+                payload = PayloadCodec.encode(Payload.Text(text, mid = id, ts = now)),
                 clientTs = now,
             ),
         )
@@ -92,7 +93,7 @@ class RoomMessagingRepository(
                 messageId = messageId,
                 conversationId = message.conversationId,
                 recipientId = message.peerId,
-                payload = PayloadCodec.encode(Payload.Text(message.body)),
+                payload = PayloadCodec.encode(Payload.Text(message.body, mid = messageId, ts = message.timestamp)),
                 clientTs = message.timestamp,
             ),
         )
@@ -149,6 +150,7 @@ class RoomMessagingRepository(
         text = body,
         timestamp = Instant.ofEpochMilli(timestamp),
         status = status?.let { statusFor(it, showRead) },
+        notice = placeholder?.let { MessageNotice.valueOf(it) },
     )
 
     private fun ConversationRow.toSummary(conversationId: ConversationId, showRead: Boolean) = ConversationSummary(
@@ -162,6 +164,7 @@ class RoomMessagingRepository(
                 text = body.orEmpty(),
                 timestamp = Instant.ofEpochMilli(timestamp ?: 0),
                 status = status?.let { s -> statusFor(s, showRead) },
+                notice = placeholder?.let { MessageNotice.valueOf(it) },
             )
         },
         unreadCount = unread,

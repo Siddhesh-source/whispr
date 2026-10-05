@@ -2,6 +2,7 @@ package dev.whispr.data
 
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
+import dev.whispr.data.auth.TokenSource
 import dev.whispr.data.crypto.BundleSource
 import dev.whispr.data.crypto.KeyServer
 import dev.whispr.data.crypto.PreKeyMaintainer
@@ -9,13 +10,16 @@ import dev.whispr.data.crypto.SessionCrypto
 import dev.whispr.data.crypto.SignalStore
 import dev.whispr.data.db.ContactEntity
 import dev.whispr.data.db.WhisprDatabase
+import dev.whispr.data.identity.IdentityKeyPairSource
 import dev.whispr.data.network.ApiResult
 import dev.whispr.data.network.BundleResponse
 import dev.whispr.data.network.BundleResult
 import dev.whispr.data.network.KeyCountsResponse
 import dev.whispr.data.network.KeyUploadRequest
+import dev.whispr.data.network.KeysApi
 import dev.whispr.data.network.KyberKeyJson
 import dev.whispr.data.network.OneTimeKeyJson
+import dev.whispr.data.network.ServerConfig
 import dev.whispr.data.network.SignedKeyJson
 import java.io.File
 import java.util.Base64
@@ -23,6 +27,7 @@ import java.util.UUID
 import java.util.concurrent.Executors
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.runBlocking
+import okhttp3.OkHttpClient
 import org.signal.libsignal.protocol.IdentityKeyPair
 
 /**
@@ -99,6 +104,22 @@ class FakeKeyServer {
             ),
         )
     }
+}
+
+/** Real libsignal crypto for an engine under test, talking HTTP to [url] (fake or live server). */
+class DeviceCrypto(
+    db: WhisprDatabase,
+    client: OkHttpClient,
+    url: String,
+    tokens: TokenSource,
+    identity: IdentityKeyPairSource,
+    localUser: suspend () -> String,
+) {
+    val dispatcher = Executors.newSingleThreadExecutor().asCoroutineDispatcher()
+    val keys = KeysApi(client, ServerConfig(url), tokens)
+    val store = SignalStore(db.cryptoDao())
+    val crypto = SessionCrypto(db, store, identity, { keys.bundle(it) }, dispatcher, localUser)
+    val maintainer = PreKeyMaintainer(db, store, identity, keys, dispatcher)
 }
 
 /** One phone: its own database, identity, libsignal store and crypto, against [server]. */

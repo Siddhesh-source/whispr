@@ -75,7 +75,10 @@ class LiveMessagingTest {
             LibsignalIdentityRepository(SecretFileStore(secrets, SoftwareKeyWrapper()), Dispatchers.IO)
         val auth = SessionAuthRepository(AuthApi(client, ServerConfig(url)), identity, accounts)
         private val api = WhisprApi(client, ServerConfig(url), auth)
-        val contacts = RoomContactsRepository(db, api, accounts, identity, allowInsecureLoopback = true)
+        private val crypto = DeviceCrypto(db, client, url, auth, identity) { id.value }
+        val contacts = RoomContactsRepository(db, api, accounts, identity, allowInsecureLoopback = true) {
+            engine.onKeyChangeAcknowledged(it)
+        }
         private var scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         private var engine = newEngine()
         var repo = repoFor(engine)
@@ -92,6 +95,8 @@ class LiveMessagingTest {
                 override val isOnline = flowOf(true)
             },
             scope,
+            crypto.crypto,
+            crypto.maintainer,
             EngineTimings(backoffBaseMs = 100, backoffMaxMs = 500),
         ).also { it.setForeground(true) }
 

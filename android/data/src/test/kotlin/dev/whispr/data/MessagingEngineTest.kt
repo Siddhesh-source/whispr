@@ -40,6 +40,7 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.signal.libsignal.protocol.IdentityKeyPair
 
 /** The engine against a scripted gateway: ordering, acks, retries, receipts. */
 @RunWith(RobolectricTestRunner::class)
@@ -65,11 +66,15 @@ class MessagingEngineTest {
         server.dispatcher = gateway
         server.start()
         db.accountDao().upsert(AccountEntity(userId = me.value, displayName = "Me", avatarPath = null))
-        db.contactDao().upsert(ContactEntity(peer.value, "Peer", ByteArray(33), 0))
-        gateway.users[peer.value] = "Peer"
+        val identity = IdentityKeyPair.generate()
+        gateway.registerSelf(me.value, identity.publicKey.serialize())
+        val peerDevice = gateway.peer(peer.value, "Peer")
+        db.contactDao().upsert(ContactEntity(peer.value, "Peer", peerDevice.identity.publicKey.serialize(), 0))
         val client = OkHttpClient()
-        val api = WhisprApi(client, ServerConfig(server.url("/").toString()), tokens)
+        val url = server.url("/").toString()
+        val api = WhisprApi(client, ServerConfig(url), tokens)
         val accounts = DbAccounts(db)
+        val crypto = DeviceCrypto(db, client, url, tokens, { identity }) { me.value }
         engine = MessagingEngine(
             db,
             client,
@@ -80,6 +85,8 @@ class MessagingEngineTest {
                 override val isOnline: Flow<Boolean> = online
             },
             scope = scope,
+            crypto = crypto.crypto,
+            maintainer = crypto.maintainer,
             timings = EngineTimings(resendAfterMs = 500, backoffBaseMs = 50, backoffMaxMs = 200, typingVisibleMs = 300),
         )
         repo = RoomMessagingRepository(db, engine, accounts, RoomSettingsRepository(db.settingDao()))
@@ -91,6 +98,7 @@ class MessagingEngineTest {
     fun tearDown() {
         scope.cancel()
         server.close()
+        gateway.closePeers()
         db.close()
     }
 
@@ -109,7 +117,7 @@ class MessagingEngineTest {
         repeat(10) { repo.sendText(peer, "m$it") }
 
         eventually("all sent") { messages().all { it.status == MessageStatus.Sent } }
-        assertEquals((0 until 10).map { "m$it" }, gateway.sends.map { it.payloadBody() }.distinct())
+        assertEquals((0 until 10).map { "m$it" }, gateway.sends.map { gateway.payloadBody(it) }.distinct())
         assertEquals(1, maxInFlight)
         assertEquals(0, db.outboxDao().observeCount().first())
         assertEquals(conversation.value, gateway.sends.first().s("conversation_id"))
@@ -248,19 +256,36 @@ class MessagingEngineTest {
         gateway.push(gateway.envelope(peer.value, """{"t":"text","body":"two"}"""))
         eventually("stored") { messages().size == 2 }
         repo.markRead(conversation)
-        eventually("receipt sent") { gateway.sends.any { it.payloadText().contains("\"read\"") } }
+        eventually("receipt sent") { gateway.sends.any { gateway.payloadText(it).contains("\"read\"") } }
     }
 
     @Test
     fun typingIsTransientAndExpires() = runBlocking {
         RoomSettingsRepository(db.settingDao()).setTypingIndicators(true)
         eventually("connected") { gateway.current != null }
+        // Typing is only sent over an existing session (it never fetches keys).
+        repo.onTyping(peer)
+        Thread.sleep(300)
+        assertTrue("no typing without a session", gateway.transients.isEmpty())
+        gateway.push(gateway.envelope(peer.value, """{"t":"text","body":"hi"}"""))
+        eventually("session from their message") { messages().size == 1 }
+        Thread.sleep(3_100) // typing is throttled to once every 3 s
         repo.onTyping(peer)
         eventually("typing sent") { gateway.transients.isNotEmpty() }
         assertTrue("typing never goes through the outbox", gateway.sends.isEmpty())
+        assertEquals(
+            """{"t":"typing"}""",
+            gateway.payloadText(
+                gateway.transients.first().let { t ->
+                    kotlinx.serialization.json.buildJsonObject {
+                        t.forEach { (k, v) -> put(k, v) }
+                        put("id", kotlinx.serialization.json.JsonPrimitive("typing-" + System.nanoTime()))
+                    }
+                },
+            ),
+        )
 
-        val payload = java.util.Base64.getEncoder().encodeToString("""{"t":"typing"}""".toByteArray())
-        gateway.push("""{"type":"transient","sender_id":"${peer.value}","conversation_id":"x","payload":"$payload"}""")
+        gateway.push(gateway.typingFrom(peer.value))
         eventually("peer typing") { repo.observePeerTyping(conversation).first() }
         eventually("typing expires") { !repo.observePeerTyping(conversation).first() }
     }

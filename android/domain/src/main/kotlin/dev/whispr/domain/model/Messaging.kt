@@ -67,7 +67,24 @@ data class Message(
     val timestamp: Instant,
     /** Outgoing messages only. */
     val status: MessageStatus?,
+    /** Set when this is a stand-in for a message that could not be shown. */
+    val notice: MessageNotice? = null,
 )
+
+/** Why a message is shown as a stand-in instead of its text. */
+enum class MessageNotice {
+    /** Couldn't decrypt; the sender was asked to resend it. */
+    Pending,
+
+    /** Couldn't decrypt; will ask the sender once their chat is unblocked. */
+    Waiting,
+
+    /** Couldn't decrypt and couldn't be recovered. */
+    Unrecoverable,
+
+    /** Held because the sender's safety number changed; shown after review. */
+    Held,
+}
 
 data class ConversationSummary(
     val id: ConversationId,
