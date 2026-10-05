@@ -1,7 +1,7 @@
 # Whispr architecture
 
-Status: draft through Phase 3 (identity, authentication, app shell, 1:1
-messaging, QR contacts and verification). It describes what exists today and marks what is planned.
+Status: draft covering identity, authentication, the app shell, 1:1
+messaging, QR contacts and verification, and end-to-end encryption. It describes what exists today and marks what is planned.
 
 ## Goals and non-negotiables
 
@@ -219,8 +219,8 @@ is allowed only in the debug network security config, and only for loopback.
 | `payload` (≤ 64 KiB) | sender | **never parsed or logged** |
 
 The payload is the only place message semantics live: `{"t":"text","body":…}`,
-`{"t":"read","ids":[…]}`, `{"t":"typing"}`. Phase 4 encrypts these bytes with
-libsignal; the server and schema do not change.
+`{"t":"read","ids":[…]}`, `{"t":"typing"}`. These bytes are encrypted end to
+end with libsignal (see End-to-end encryption); the server never sees them.
 
 ### Protocol (WebSocket `/v1/ws`, bearer token in the upgrade request)
 
@@ -358,10 +358,51 @@ stored. Decoded text goes straight to the parser above.
 | Device | zxing-cpp decodes what we render, including inverted codes |
 | Two emulators (2026-10-04) | database upgrade keeps chats; B scans A's code; A accepts; chat both ways and after restarts; both verify each other; simulated key change on the server shows the warning and blocks sending; acknowledgement restores the original number |
 
+## End-to-end encryption
+
+Design: `docs/designs/end-to-end-encryption.md`. All cryptography is libsignal.
+
+### Server
+
+- `PUT /v1/keys` uploads the registration ID, signed prekey, last-resort Kyber
+  key and batches of one-time keys (signatures checked with libsignal).
+- The bundle endpoint pops, in one transaction, one EC one-time key (if any)
+  and one Kyber one-time key, falling back to the last-resort key, so no
+  one-time key is handed out twice. Rate limited per requester and per
+  requester/target pair.
+- Envelopes are unchanged: the payload is now ciphertext.
+
+### Android (`data`)
+
+- **`SignalStore`** implements libsignal's stores over Room (SQLCipher).
+- **`PreKeyMaintainer`** registers keys, tops up one-time keys, and rotates the
+  signed and last-resort keys every 7 days. Settings warns while keys could
+  not be uploaded.
+- **`SessionCrypto`** builds sessions from bundles and encrypts/decrypts on one
+  `whispr-crypto` thread. Decryption and the resulting database writes commit
+  in one transaction. Wire format: a type byte plus the libsignal message;
+  plaintext padded to a multiple of 160 bytes.
+- **Outbox lanes:** each recipient has its own lane. A lane parks (no keys yet,
+  key changed) without blocking other chats. A message is encrypted once at
+  the head of its lane and the ciphertext kept for retries.
+- **`IncomingPipeline`:** sender-scoped dedup; replays dropped; envelopes under
+  a changed key held encrypted until the user acknowledges; undecryptable ones
+  become a placeholder (`Message.notice`) plus a durable reset request.
+- **`ResetCoordinator`:** at most one `SessionReset` per peer every 5 minutes,
+  coalescing failures; waits while the lane is parked; the 24 h answer window
+  starts when the reset is delivered; 3 attempts, 30-day expiry. The peer
+  resends the listed messages, which replace their placeholders in place.
+
+### Testing
+
+| Where | What |
+|---|---|
+| Server | bundle pops are atomic under concurrent fetches; last-resort fallback; signature checks; rate limits |
+| Data (JVM, real libsignal) | PQXDH then ratchet; wire format and padding; replays; tampering and in-place recovery; held messages; parked lanes; reset scoping, cooldown, delivery clock, restarts; poison guard |
+| Data (device) | the SQLCipher file holds no private key bytes or message text |
+| CI `e2e` workflow | live tests against the composed server; a marker message is absent from `pg_dump` and captured traffic |
+
 ## Planned next (not built)
 
-- Encryption (Phase 4): libsignal sessions (PQXDH and Double Ratchet via
-  libsignal) and prekey upload. Envelope payloads become ciphertext; nothing on
-  the server changes.
 - Encrypted media in S3/MinIO: encrypted client-side, server stores opaque blobs.
 - Encrypted profiles (replaces the plaintext display name on the server).

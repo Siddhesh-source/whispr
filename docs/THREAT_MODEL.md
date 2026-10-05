@@ -1,8 +1,8 @@
 # Whispr threat model
 
-Status: draft covering Phase 1 (identity, registration, sign-in, local
-storage), Phase 2 (1:1 messaging, push) and Phase 3 (QR contacts,
-verification, usernames). Media gets its
+Status: draft covering identity, registration, sign-in and local storage;
+1:1 messaging and push; QR contacts, verification and usernames; and
+end-to-end encryption with libsignal. Media gets its
 own section when built. "Gap" marks a known weakness we have accepted for now, each with a plan.
 
 ## Assets
@@ -10,7 +10,8 @@ own section when built. "Gap" marks a known weakness we have accepted for now, e
 | Asset | Where it lives | Why it matters |
 |-------|----------------|----------------|
 | Identity private key | Device only: wrapped by AndroidKeyStore, in app memory while running | Whoever holds it *is* the user: can sign in and, later, impersonate them to contacts |
-| Message content | Devices; **server too during Phase 2** (plaintext payloads) | Confidentiality of conversations |
+| Message content | Devices only; the server relays and stores ciphertext | Confidentiality of conversations |
+| Session state and private prekeys | Device only, in the SQLCipher database | Whoever holds them can decrypt messages in flight to this device |
 | Local database | Device: SQLCipher, key wrapped by Keystore | Profile, contacts, messages, outbox |
 | Session token | App memory and server (hash only) | Short-lived API access |
 | Metadata | Server | Who uses the service, when, and (later) who talks to whom |
@@ -99,7 +100,7 @@ encryption protects content even from a server or network that defeats TLS.
 |--------|------------|--------|
 | Server impersonates a user | Server never holds private keys; it cannot produce users' signatures | Done |
 | Server substitutes identity keys when a contact is added (MITM) | Contacts are added by scanning a QR code that carries the identity key, verified out of band; key changes will be surfaced to users | **Planned** (Phase 2) |
-| Server reads messages | E2EE via libsignal; the server stores opaque envelopes | **Planned** (messaging phase) |
+| Server reads messages | E2EE via libsignal (PQXDH, then the Double Ratchet); the server stores ciphertext only | Done, tested (see End-to-end encryption) |
 | Server builds a social graph | Minimize: delete envelopes on delivery; evaluate sealed sender | **Planned** |
 | Denial of service | Out of scope for confidentiality; the client degrades gracefully (offline banner, retries with backoff) | Partial |
 
@@ -133,12 +134,12 @@ encryption protects content even from a server or network that defeats TLS.
 
 | Data | Stored? | Notes |
 |---|---|---|
-| **Message content** | **Yes, plaintext, until delivered** | **Phase 2 gap, by design of the brief.** Payloads are opaque to server *code* (never parsed or logged), but the operator or a DB thief can read undelivered messages. The app shows a "not end-to-end encrypted yet" notice in every chat. Phase 4 encrypts payloads with libsignal with no server change. |
-| Who messages whom, and when | Yes, until delivery (envelope rows) | Sender, recipient, conversation ID, timestamps, size. Deleted on acknowledgement or after 30 days. **Gap**: sealed sender to be evaluated in Phase 4. |
+| Message content | Ciphertext only, until delivered | Encrypted end to end; see End-to-end encryption below. |
+| Who messages whom, and when | Yes, until delivery (envelope rows) | Sender, recipient, conversation ID, timestamps, size. Deleted on acknowledgement or after 30 days. **Gap**: no sealed sender. |
 | Dedup tombstones `(sender, message_id, time)` | Yes, 30 days | Needed for exactly-once; reveals sending activity, not recipients. |
 | Delivery receipts | Yes, until delivered | The server knows delivery happened anyway. |
-| Read receipts | As opaque envelopes | Off by default. Plaintext in Phase 2; encrypted in Phase 4. |
-| Typing indicators | Never stored | Off by default; relayed to live connections only. |
+| Read receipts | As encrypted envelopes | Off by default. |
+| Typing indicators | Never stored | Off by default; encrypted; relayed to live connections only. The server still sees *when* someone types. |
 | Online presence | In memory only | Which users are connected right now; never persisted or logged. |
 | Push token | Yes (one per account) | FCM token; deleted when FCM reports it unregistered. |
 
@@ -168,7 +169,7 @@ encryption protects content even from a server or network that defeats TLS.
 |---|---|---|
 | Username (`name.42`) | Yes, if claimed | Optional public handle. Lookups need the exact handle and are rate-limited (10/min per IP). Numbers are random, so they don't reveal how many people share a nickname. |
 | Who looked up whom | No | Lookups are not logged. |
-| Contact requests | As envelopes until delivered | Contain the requester's name and identity key, in plaintext until Phase 4. |
+| Contact requests | As encrypted envelopes until delivered | Name and identity key are inside the ciphertext. |
 | Safety numbers, verified state | No | Device only. |
 
 ### Threats and mitigations
@@ -194,10 +195,53 @@ encryption protects content even from a server or network that defeats TLS.
 3. No app lock, no screen-security flag, no incognito keyboard flag yet.
 4. Spam resistance is weak (IP rate limit only).
 5. No production TLS endpoint or certificate pinning yet.
-6. Message payloads (including contact requests) are plaintext on the server
-   until delivered, until Phase 4.
-7. Usernames and server-looked-up contacts start on trust-on-first-use; only
+6. Usernames and server-looked-up contacts start on trust-on-first-use; only
    safety-number verification proves the key.
+
+## End-to-end encryption
+
+Every envelope payload (text, receipts, contact requests, typing, session
+resets) is encrypted with libsignal: PQXDH for the first message, then the
+Double Ratchet. Plaintext is padded to a multiple of 160 bytes before
+encryption. Private keys and session state never leave the device's SQLCipher
+database. Design: `docs/designs/end-to-end-encryption.md`.
+
+### What the server still sees
+
+| Data | Notes |
+|---|---|
+| Routing metadata | Sender, recipient, conversation ID, timestamps, and the **padded** size of each envelope |
+| Prekey consumption | Public prekeys, and how fast each user's one-time keys are fetched |
+| Registration ID | Uploaded with the keys; stable per install |
+| Delivery events | When each envelope is acknowledged (the server sends the "delivered" receipt) |
+| Push timing | When a device is woken |
+| Typing timing | That one user sends a transient frame to another, and when; the frame itself is encrypted |
+
+It no longer sees message text, read receipts, contact requests (names and
+keys), or session-reset requests.
+
+### What a malicious server can still do
+
+| Action | Effect | Bound |
+|---|---|---|
+| Inject garbage envelopes | The recipient shows a "couldn't decrypt" placeholder and asks the claimed sender to resend | Placeholders are scoped to the authenticated sender; nothing is shown as a real message |
+| Force session resets | Repeated failures make devices rebuild sessions | At most one reset per peer every 5 minutes; each failed message gets at most 3 attempts and is given up after 30 days |
+| Drain one-time prekeys | New sessions fall back to the last-resort Kyber key and the signed prekey (still post-quantum, less forward secrecy for the first message) | Bundle fetches are rate limited per requester and per requester/target pair; devices top up their keys |
+| Drop, delay or reorder messages | Messages arrive late or not at all | Not preventable; the sender sees "Sent" without "Delivered" |
+| Substitute an identity key | Messages under the new key are **held, unread**, and sending pauses until the user acknowledges the change | Identity keys are immutable on the server, so a key change can only come from the server itself; safety-number verification detects it |
+
+### Threats and mitigations
+
+| Threat | Mitigation | Status |
+|---|---|---|
+| Server or DB thief reads messages | Payloads are libsignal ciphertext; CI dumps the server database and captures traffic and checks a marker message never appears | Done, tested (CI `e2e` workflow) |
+| Replayed envelope under a new transport ID | libsignal rejects reused message keys and base keys; dropped silently, no placeholder | Done, tested |
+| Tampered ciphertext | MAC failure: placeholder plus a resend request; the resend replaces the placeholder in place | Done, tested |
+| Reset asking a peer for messages sent to someone else | A reset answer only covers messages sent to the requesting peer | Done, tested |
+| Message from a contact whose key changed | Held encrypted, never shown, until acknowledged | Done, tested |
+| Envelope that crashes processing (poison) | Not acknowledged, retried; after 3 attempts (counted across restarts) it becomes a placeholder | Done, tested |
+| Key material read from the device's disk | Sessions and prekeys live in the SQLCipher database; a device test checks no private key bytes appear in the file | Done, tested on device |
+| Harvest now, decrypt later with a quantum computer | PQXDH (ML-KEM) protects session establishment | Done |
 
 ## Review triggers
 

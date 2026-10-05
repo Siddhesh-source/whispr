@@ -7,9 +7,13 @@ same licence as libsignal.
 
 ```
 android/   Kotlin + Jetpack Compose client
-server/    Go backend (REST, later WebSocket), PostgreSQL, S3-compatible storage
+server/    Go backend (REST and WebSocket), PostgreSQL, S3-compatible storage
 docs/      Architecture and threat model
 ```
+
+Messages, receipts, contact requests and typing indicators are end-to-end
+encrypted with libsignal (PQXDH and the Double Ratchet). The server relays
+and stores ciphertext only; `docs/THREAT_MODEL.md` lists what it still sees.
 
 ## Backend
 
