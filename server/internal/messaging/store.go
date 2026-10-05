@@ -1,8 +1,10 @@
 package messaging
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -42,6 +44,11 @@ type Store interface {
 	// Accept persists e. If (sender, message_id) was accepted before, nothing
 	// is stored and the original seq/server_ts are returned with dup=true.
 	Accept(ctx context.Context, e Envelope) (stored Envelope, dup bool, err error)
+	// AcceptMulti persists one copy of e per recipient (group fan-out) in one
+	// transaction, under a single dedup tombstone for (sender, message_id).
+	// The returned envelope carries the first copy's seq. recipients must be
+	// distinct; an unknown recipient fails the whole send.
+	AcceptMulti(ctx context.Context, e Envelope, recipients []uuid.UUID) (stored Envelope, dup bool, err error)
 	// Pending returns the recipient's envelopes with seq > after, in seq order.
 	Pending(ctx context.Context, recipient uuid.UUID, after int64, limit int) ([]Envelope, error)
 	// Ack deletes the recipient's envelope seq. For client envelopes it
@@ -93,6 +100,61 @@ func (s *PGStore) Accept(ctx context.Context, e Envelope) (Envelope, bool, error
 		if err := insertEnvelope(ctx, tx, e); err != nil {
 			return err
 		}
+		stored = e
+		return nil
+	})
+	if isForeignKeyViolation(err) {
+		return Envelope{}, false, ErrUnknownRecipient
+	}
+	return stored, dup, err
+}
+
+func (s *PGStore) AcceptMulti(ctx context.Context, e Envelope, recipients []uuid.UUID) (Envelope, bool, error) {
+	// Lock recipients in a fixed order so concurrent fan-outs to
+	// overlapping sets can't deadlock.
+	sorted := slices.Clone(recipients)
+	slices.SortFunc(sorted, func(a, b uuid.UUID) int { return bytes.Compare(a[:], b[:]) })
+	var stored Envelope
+	var dup bool
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		for _, r := range sorted {
+			if err := lockRecipient(ctx, tx, r); err != nil {
+				return err
+			}
+		}
+		var first int64
+		err := tx.QueryRow(ctx, `
+			INSERT INTO accepted_messages (sender_id, message_id, seq, server_ts)
+			VALUES ($1, $2, nextval(pg_get_serial_sequence('envelopes', 'seq')), $3)
+			ON CONFLICT (sender_id, message_id) DO NOTHING
+			RETURNING seq`,
+			e.SenderID, e.MessageID, e.ServerTS,
+		).Scan(&first)
+		if errors.Is(err, pgx.ErrNoRows) {
+			dup = true
+			stored = e
+			return tx.QueryRow(ctx, `
+				SELECT seq, server_ts FROM accepted_messages WHERE sender_id = $1 AND message_id = $2`,
+				e.SenderID, e.MessageID,
+			).Scan(&stored.Seq, &stored.ServerTS)
+		}
+		if err != nil {
+			return err
+		}
+		for i, r := range sorted {
+			c := e
+			c.RecipientID = r
+			c.Seq = first
+			if i > 0 {
+				if err := tx.QueryRow(ctx, `SELECT nextval(pg_get_serial_sequence('envelopes', 'seq'))`).Scan(&c.Seq); err != nil {
+					return err
+				}
+			}
+			if err := insertEnvelope(ctx, tx, c); err != nil {
+				return err
+			}
+		}
+		e.Seq = first
 		stored = e
 		return nil
 	})

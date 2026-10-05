@@ -12,7 +12,9 @@ import (
 // Client → server:
 //
 //	{"type":"send", "id", "conversation_id", "recipient_id", "client_ts", "payload"}
-//	{"type":"ack", "seq"}                    after the envelope is durably stored on the device
+//	{"type":"send_multi", "id", "conversation_id", "recipient_ids", "client_ts", "payload"}
+//	                                          one payload fanned out to each recipient (groups)
+//	{"type":"ack", "seq"}                  after the envelope is durably stored on the device
 //	{"type":"transient", "recipient_id", "conversation_id", "payload"}
 //	                                          best effort, never stored (typing indicators)
 //
@@ -27,6 +29,7 @@ import (
 
 const (
 	frameSend      = "send"
+	frameSendMulti = "send_multi"
 	frameAck       = "ack"
 	frameTransient = "transient"
 	frameAccepted  = "accepted"
@@ -48,13 +51,14 @@ const (
 )
 
 type clientFrame struct {
-	Type           string    `json:"type"`
-	ID             uuid.UUID `json:"id"`
-	ConversationID uuid.UUID `json:"conversation_id"`
-	RecipientID    uuid.UUID `json:"recipient_id"`
-	ClientTS       time.Time `json:"client_ts"`
-	Payload        []byte    `json:"payload"`
-	Seq            int64     `json:"seq"`
+	Type           string      `json:"type"`
+	ID             uuid.UUID   `json:"id"`
+	ConversationID uuid.UUID   `json:"conversation_id"`
+	RecipientID    uuid.UUID   `json:"recipient_id"`
+	RecipientIDs   []uuid.UUID `json:"recipient_ids"`
+	ClientTS       time.Time   `json:"client_ts"`
+	Payload        []byte      `json:"payload"`
+	Seq            int64       `json:"seq"`
 }
 
 type acceptedFrame struct {

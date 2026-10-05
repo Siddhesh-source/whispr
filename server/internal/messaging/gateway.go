@@ -124,6 +124,16 @@ func (g *Gateway) readLoop(ctx context.Context, conn *websocket.Conn, user uuid.
 				break
 			}
 			reply = g.handleSend(ctx, user, f)
+		case frameSendMulti:
+			switch {
+			case len(f.RecipientIDs) > MaxRecipients:
+				reply = rejectedFrame{Type: frameRejected, ID: f.ID, Code: codeInvalid}
+			// A fan-out costs more than one send, but much less than n.
+			case !limiter.AllowN(time.Now(), 1+len(f.RecipientIDs)/10):
+				reply = rejectedFrame{Type: frameRejected, ID: f.ID, Code: codeRateLimited}
+			default:
+				reply = g.handleSendMulti(ctx, user, f)
+			}
 		case frameAck:
 			if err := g.svc.Ack(ctx, user, f.Seq); err != nil {
 				g.log.Error("ack failed", "err", err)
@@ -154,6 +164,17 @@ func (g *Gateway) handleSend(ctx context.Context, user uuid.UUID, f clientFrame)
 		MessageID: f.ID, ConversationID: f.ConversationID, RecipientID: f.RecipientID,
 		ClientTS: f.ClientTS, Payload: f.Payload,
 	})
+	return g.sendReply(f, stored, err)
+}
+
+func (g *Gateway) handleSendMulti(ctx context.Context, user uuid.UUID, f clientFrame) any {
+	stored, err := g.svc.AcceptMulti(ctx, user, Envelope{
+		MessageID: f.ID, ConversationID: f.ConversationID, ClientTS: f.ClientTS, Payload: f.Payload,
+	}, f.RecipientIDs)
+	return g.sendReply(f, stored, err)
+}
+
+func (g *Gateway) sendReply(f clientFrame, stored Envelope, err error) any {
 	switch {
 	case err == nil:
 		return acceptedFrame{Type: frameAccepted, ID: stored.MessageID, Seq: stored.Seq, ServerTS: stored.ServerTS.UTC()}

@@ -14,6 +14,9 @@ import (
 // storage separately (Phase 3+); envelopes carry text and references.
 const MaxPayloadBytes = 64 << 10
 
+// MaxRecipients bounds one fan-out (the largest group, minus the sender).
+const MaxRecipients = 100
+
 var (
 	ErrInvalidEnvelope = errors.New("messaging: invalid envelope")
 	ErrSelfRecipient   = errors.New("messaging: cannot send to self")
@@ -86,6 +89,45 @@ func (s *Service) Accept(ctx context.Context, sender uuid.UUID, e Envelope) (Env
 	}
 	if !dup {
 		s.deliver(ctx, stored.RecipientID)
+	}
+	return stored, nil
+}
+
+// AcceptMulti validates and persists one envelope fanned out to several
+// recipients (a group message encrypted once with a sender key). The server
+// learns the recipient set, which it needs for delivery, and nothing about
+// the group itself.
+func (s *Service) AcceptMulti(ctx context.Context, sender uuid.UUID, e Envelope, recipients []uuid.UUID) (Envelope, error) {
+	if e.MessageID == uuid.Nil || e.ConversationID == uuid.Nil || e.ClientTS.IsZero() ||
+		len(e.Payload) > MaxPayloadBytes || len(recipients) == 0 || len(recipients) > MaxRecipients {
+		return Envelope{}, ErrInvalidEnvelope
+	}
+	seen := make(map[uuid.UUID]bool, len(recipients))
+	for _, r := range recipients {
+		if r == uuid.Nil || seen[r] {
+			return Envelope{}, ErrInvalidEnvelope
+		}
+		if r == sender {
+			return Envelope{}, ErrSelfRecipient
+		}
+		seen[r] = true
+	}
+	e.SenderID = sender
+	e.RecipientID = uuid.Nil
+	e.Kind = KindEnvelope
+	e.RefMessageID = uuid.NullUUID{}
+	e.ServerTS = s.now().UTC()
+	if e.Payload == nil {
+		e.Payload = []byte{}
+	}
+	stored, dup, err := s.store.AcceptMulti(ctx, e, recipients)
+	if err != nil {
+		return Envelope{}, err
+	}
+	if !dup {
+		for _, r := range recipients {
+			s.deliver(ctx, r)
+		}
 	}
 	return stored, nil
 }
