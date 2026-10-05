@@ -71,7 +71,14 @@ class ResetRecoveryTest {
     /** (Re)starts Bob's app on [device]: fresh pipeline and coordinator over its database. */
     private fun openBob(device: CryptoDevice) {
         bob = device
-        pipeline = IncomingPipeline(bob.db, bob.crypto, { null }, events, clock)
+        pipeline = IncomingPipeline(
+            bob.db,
+            bob.crypto,
+            { null },
+            events,
+            dev.whispr.data.messaging.GroupManager(bob.db, bob.crypto, clock),
+            clock,
+        )
         resets = ResetCoordinator(bob.db, bob.crypto, clock)
     }
 

@@ -43,7 +43,10 @@ import dev.whispr.core.designsystem.component.WhisprPrimaryButton
 import dev.whispr.core.designsystem.component.WhisprTopBar
 import dev.whispr.core.designsystem.icon.WhisprIcons
 import dev.whispr.core.designsystem.theme.WhisprTheme
+import dev.whispr.domain.model.AttachmentKind
 import dev.whispr.domain.model.ConversationSummary
+import dev.whispr.domain.model.GroupId
+import dev.whispr.domain.model.GroupStatus
 import dev.whispr.domain.model.TrustState
 import dev.whispr.domain.model.UserId
 
@@ -52,6 +55,8 @@ fun ChatsRoute(
     onOpenSettings: () -> Unit,
     onMyCode: () -> Unit,
     onOpenChat: (UserId) -> Unit,
+    onOpenGroup: (GroupId) -> Unit,
+    onNewGroup: () -> Unit,
     onNewChat: () -> Unit,
     viewModel: ChatsViewModel = hiltViewModel(),
 ) {
@@ -63,6 +68,8 @@ fun ChatsRoute(
         onMyCode = onMyCode,
         onOpenChat = onOpenChat,
         onNewChat = onNewChat,
+        onOpenGroup = onOpenGroup,
+        onNewGroup = onNewGroup,
         onRetry = viewModel::retrySignIn,
     )
 }
@@ -75,6 +82,8 @@ fun ChatsScreen(
     onOpenChat: (UserId) -> Unit = {},
     onNewChat: () -> Unit = {},
     onMyCode: () -> Unit = {},
+    onOpenGroup: (GroupId) -> Unit = {},
+    onNewGroup: () -> Unit = {},
 ) {
     val newChat = stringResource(R.string.chats_new_chat)
     Scaffold(
@@ -83,6 +92,9 @@ fun ChatsScreen(
             WhisprTopBar(
                 title = stringResource(R.string.chats_title),
                 actions = {
+                    IconButton(onClick = onNewGroup) {
+                        Icon(WhisprIcons.Group, contentDescription = stringResource(R.string.chats_new_group))
+                    }
                     IconButton(onClick = onMyCode) {
                         Icon(WhisprIcons.QrCode, contentDescription = stringResource(R.string.chats_my_code))
                     }
@@ -122,7 +134,9 @@ fun ChatsScreen(
                         message = stringResource(R.string.chats_error_rejected_message),
                         onRetry = onRetry,
                     )
-                    is ChatsContent.Conversations -> ConversationList(content.items, onOpenChat)
+                    is ChatsContent.Conversations -> ConversationList(content.items) { item ->
+                        item.group?.let { onOpenGroup(it.id) } ?: item.peer?.let { onOpenChat(it.userId) }
+                    }
                 }
             }
         }
@@ -130,9 +144,11 @@ fun ChatsScreen(
 }
 
 @Composable
-private fun ConversationList(items: List<ConversationSummary>, onOpenChat: (UserId) -> Unit) {
-    // Requests first, under their own heading; accepted chats below.
-    val (requests, chats) = items.partition { it.peer.isRequest }
+private fun ConversationList(items: List<ConversationSummary>, onOpen: (ConversationSummary) -> Unit) {
+    // Requests and group invites first, under their own heading; accepted chats below.
+    val (requests, chats) = items.partition {
+        it.peer?.isRequest == true || it.group?.status == GroupStatus.Invited
+    }
     LazyColumn(Modifier.fillMaxSize()) {
         if (requests.isNotEmpty()) {
             item(key = "requests-header") {
@@ -145,31 +161,46 @@ private fun ConversationList(items: List<ConversationSummary>, onOpenChat: (User
                         .semantics { heading() },
                 )
             }
-            items(requests, key = { "r-" + it.id.value }) { ConversationRow(it, onOpenChat) }
+            items(requests, key = { "r-" + it.id.value }) { ConversationRow(it, onOpen) }
             item(key = "requests-divider") { HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant) }
         }
-        items(chats, key = { it.id.value }) { ConversationRow(it, onOpenChat) }
+        items(chats, key = { it.id.value }) { ConversationRow(it, onOpen) }
     }
 }
 
 @Composable
-private fun ConversationRow(item: ConversationSummary, onOpenChat: (UserId) -> Unit) {
+private fun ConversationRow(item: ConversationSummary, onOpen: (ConversationSummary) -> Unit) {
     val last = item.lastMessage
-    val preview = when {
-        item.peer.trust == TrustState.KeyChanged -> stringResource(R.string.chats_key_changed_preview)
-        last == null && item.peer.isRequest -> stringResource(R.string.chats_request_preview)
+    val body = when {
         last == null -> ""
-        last.outgoing -> stringResource(R.string.chats_you_prefix, last.text)
+        last.attachment != null -> stringResource(last.attachment!!.kind.previewRes())
         else -> last.text
     }
+    val preview = when {
+        item.peer?.trust == TrustState.KeyChanged -> stringResource(R.string.chats_key_changed_preview)
+        item.group?.status == GroupStatus.Invited -> stringResource(R.string.chats_invite_preview)
+        item.group?.status == GroupStatus.Removed -> stringResource(R.string.chats_removed_preview)
+        last == null && item.peer?.isRequest == true -> stringResource(R.string.chats_request_preview)
+        last == null -> ""
+        last.system -> body
+        last.outgoing -> stringResource(R.string.chats_you_prefix, body)
+        last.authorName != null -> stringResource(R.string.chats_author_prefix, last.authorName!!, body)
+        else -> body
+    }
     ChatListRow(
-        name = item.peer.displayName,
+        name = item.title,
         lastMessage = preview,
         time = last?.let { formatTimestamp(it.timestamp) }.orEmpty(),
-        onClick = { onOpenChat(item.peer.userId) },
+        onClick = { onOpen(item) },
         unreadCount = item.unreadCount,
     )
     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+}
+
+internal fun AttachmentKind.previewRes() = when (this) {
+    AttachmentKind.Image -> R.string.chats_preview_photo
+    AttachmentKind.File -> R.string.chats_preview_file
+    AttachmentKind.Voice -> R.string.chats_preview_voice
 }
 
 /** Asks for notification permission (Android 13+) once there are chats to notify about. */

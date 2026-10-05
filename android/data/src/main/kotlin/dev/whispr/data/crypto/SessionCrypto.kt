@@ -7,6 +7,7 @@ import dev.whispr.data.network.BundleResponse
 import dev.whispr.data.network.BundleResult
 import dev.whispr.domain.model.TrustState
 import java.util.Base64
+import java.util.UUID
 import java.util.concurrent.Callable
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.withContext
@@ -24,8 +25,12 @@ import org.signal.libsignal.protocol.SessionCipher
 import org.signal.libsignal.protocol.SignalProtocolAddress
 import org.signal.libsignal.protocol.UntrustedIdentityException
 import org.signal.libsignal.protocol.ecc.ECPublicKey
+import org.signal.libsignal.protocol.groups.GroupCipher
+import org.signal.libsignal.protocol.groups.GroupSessionBuilder
 import org.signal.libsignal.protocol.kem.KEMPublicKey
 import org.signal.libsignal.protocol.message.PreKeySignalMessage
+import org.signal.libsignal.protocol.message.SenderKeyDistributionMessage
+import org.signal.libsignal.protocol.message.SenderKeyMessage
 import org.signal.libsignal.protocol.message.SignalMessage
 import org.signal.libsignal.protocol.state.PreKeyBundle
 
@@ -57,6 +62,15 @@ sealed interface SessionStatus {
 sealed interface EncryptResult<out T> {
     data class Ok<T>(val value: T) : EncryptResult<T>
     data class Blocked(val reason: ParkReason) : EncryptResult<Nothing>
+}
+
+sealed interface GroupDecryptResult<out T> {
+    data class Ok<T>(val value: T) : GroupDecryptResult<T>
+    data object Replay : GroupDecryptResult<Nothing>
+
+    /** We don't have the sender's key for this distribution (yet). */
+    data object NoSenderKey : GroupDecryptResult<Nothing>
+    data class Failed(val reason: String) : GroupDecryptResult<Nothing>
 }
 
 sealed interface DecryptResult<out T> {
@@ -203,7 +217,9 @@ class SessionCrypto(
      */
     suspend fun <T> decrypt(sender: String, payload: ByteArray, work: (plaintext: ByteArray) -> T): DecryptResult<T> =
         onCrypto {
-            val (type, body) = WireFormat.decode(payload) ?: return@onCrypto DecryptResult.Failed("format")
+            val (type, body) = WireFormat.decode(payload)
+                ?.takeIf { it.first != WireFormat.TYPE_SENDER_KEY } // group ciphertext: decryptGroup
+                ?: return@onCrypto DecryptResult.Failed("format")
             var preKeyMessage: PreKeySignalMessage? = null
             try {
                 tx {
@@ -255,6 +271,93 @@ class SessionCrypto(
                 DecryptResult.Failed(e.javaClass.simpleName)
             }
         }
+
+    // Groups: libsignal sender keys. The non-suspending functions below must
+    // run inside [transaction] (crypto thread, open transaction).
+
+    private val senderKeys = SenderKeys(db.groupDao())
+
+    /** Our SenderKeyDistributionMessage for [distributionId], creating the chain on first use. */
+    fun distributionMessage(distributionId: UUID): ByteArray =
+        GroupSessionBuilder(senderKeys).create(local!!, distributionId).serialize()
+
+    /**
+     * Stores [sender]'s key from a distribution message they sent us over our
+     * pairwise session. Returns its distribution ID, or null if malformed.
+     */
+    fun processDistribution(sender: String, message: ByteArray): UUID? = try {
+        val skdm = SenderKeyDistributionMessage(message)
+        GroupSessionBuilder(senderKeys).process(address(sender), skdm)
+        skdm.distributionId
+    } catch (_: InvalidMessageException) {
+        null
+    } catch (_: InvalidVersionException) {
+        null
+    } catch (_: LegacyMessageException) {
+        null
+    } catch (_: InvalidKeyException) {
+        null
+    }
+
+    /** Pads and encrypts [plaintext] once for the whole group; returns wire bytes. */
+    fun encryptGroup(distributionId: UUID, plaintext: ByteArray): ByteArray =
+        WireFormat.encode(GroupCipher(senderKeys, local!!).encrypt(distributionId, Padding.pad(plaintext)))
+
+    /** The distribution ID a group ciphertext claims, or null if it isn't one. */
+    fun groupDistributionId(payload: ByteArray): UUID? {
+        val (type, body) = WireFormat.decode(payload) ?: return null
+        if (type != WireFormat.TYPE_SENDER_KEY) return null
+        return try {
+            SenderKeyMessage(body).distributionId
+        } catch (_: InvalidMessageException) {
+            null
+        } catch (_: InvalidVersionException) {
+            null
+        } catch (_: LegacyMessageException) {
+            null
+        }
+    }
+
+    /**
+     * Decrypts a SenderKeyMessage from [sender] and runs [work] in the same
+     * transaction. [NoSenderKey][GroupDecryptResult.NoSenderKey] means their
+     * key hasn't arrived yet (hold it and retry later).
+     */
+    suspend fun <T> decryptGroup(
+        sender: String,
+        payload: ByteArray,
+        work: (plaintext: ByteArray) -> T,
+    ): GroupDecryptResult<T> = onCrypto {
+        val (_, body) = WireFormat.decode(payload)
+            ?.takeIf { it.first == WireFormat.TYPE_SENDER_KEY }
+            ?: return@onCrypto GroupDecryptResult.Failed("format")
+        try {
+            tx {
+                val padded = GroupCipher(senderKeys, address(sender)).decrypt(body)
+                val plaintext = Padding.unpad(padded) ?: throw BadPadding()
+                val value = try {
+                    work(plaintext)
+                } catch (e: Exception) {
+                    throw WorkFailed(e)
+                }
+                GroupDecryptResult.Ok(value)
+            }
+        } catch (e: WorkFailed) {
+            throw e.cause!!
+        } catch (_: DuplicateMessageException) {
+            GroupDecryptResult.Replay
+        } catch (_: NoSessionException) {
+            GroupDecryptResult.NoSenderKey
+        } catch (_: BadPadding) {
+            GroupDecryptResult.Failed("padding")
+        } catch (e: InvalidMessageException) {
+            GroupDecryptResult.Failed(e.javaClass.simpleName)
+        } catch (e: InvalidVersionException) {
+            GroupDecryptResult.Failed(e.javaClass.simpleName)
+        } catch (e: LegacyMessageException) {
+            GroupDecryptResult.Failed(e.javaClass.simpleName)
+        }
+    }
 
     private fun wasIssued(m: PreKeySignalMessage): Boolean {
         val oneTimeIssued = !m.preKeyId.isPresent || store.wasAllocated(SignalStore.KeyKind.OneTime, m.preKeyId.get())

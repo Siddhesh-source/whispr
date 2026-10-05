@@ -35,11 +35,12 @@ class WireFormatTest {
     fun onlyVersionOneLibsignalTypesAreAccepted() {
         assertEquals(WireFormat.TYPE_PREKEY, WireFormat.decode(byteArrayOf(1, 1, 9))?.first)
         assertEquals(WireFormat.TYPE_WHISPER, WireFormat.decode(byteArrayOf(1, 2, 9))?.first)
+        assertEquals(WireFormat.TYPE_SENDER_KEY, WireFormat.decode(byteArrayOf(1, 3, 9))?.first)
         // Plaintext JSON (what a malicious server might inject), other
         // versions and types, and empty bodies are all refused.
         assertNull(WireFormat.decode("""{"t":"text","body":"hi"}""".toByteArray()))
         assertNull(WireFormat.decode(byteArrayOf(2, 1, 9)))
-        assertNull(WireFormat.decode(byteArrayOf(1, 3, 9)))
+        assertNull(WireFormat.decode(byteArrayOf(1, 4, 9)))
         assertNull(WireFormat.decode(byteArrayOf(1, 1)))
         assertNull(WireFormat.decode(ByteArray(0)))
     }

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Only decrypted copies the user asked to open; nothing else is shareable. -->
+<paths>
+    <cache-path name="open" path="open/" />
+</paths>

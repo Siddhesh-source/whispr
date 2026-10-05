@@ -3,18 +3,22 @@ package dev.whispr.android.ui.chat
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import androidx.navigation.toRoute
 import dagger.hilt.android.lifecycle.HiltViewModel
-import dev.whispr.android.navigation.ChatDestination
 import dev.whispr.android.notifications.ActiveConversation
 import dev.whispr.core.designsystem.component.BubbleGroupPosition
+import dev.whispr.domain.model.AttachmentKind
 import dev.whispr.domain.model.ConversationId
+import dev.whispr.domain.model.GroupId
+import dev.whispr.domain.model.GroupStatus
+import dev.whispr.domain.model.MediaSource
 import dev.whispr.domain.model.Message
+import dev.whispr.domain.model.SendResult
 import dev.whispr.domain.model.TrustState
 import dev.whispr.domain.model.UserId
 import dev.whispr.domain.repository.AccountRepository
 import dev.whispr.domain.repository.ConnectivityRepository
 import dev.whispr.domain.repository.ContactsRepository
+import dev.whispr.domain.repository.GroupsRepository
 import dev.whispr.domain.repository.MessagingRepository
 import javax.inject.Inject
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -25,6 +29,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -37,6 +42,9 @@ sealed interface ChatContent {
     data class Messages(val items: List<BubbleItem>) : ChatContent
 }
 
+/** Why a media send was refused, shown once as a message. */
+enum class ChatError { TooLarge, Unreadable, NotAllowed }
+
 data class ChatUiState(
     val peerName: String = "",
     val content: ChatContent = ChatContent.Loading,
@@ -46,9 +54,15 @@ data class ChatUiState(
     val trust: TrustState = TrustState.Unverified,
     /** They added us and we have not accepted yet. */
     val isRequest: Boolean = false,
+    val isGroup: Boolean = false,
+    /** Groups only. */
+    val groupStatus: GroupStatus? = null,
+    val memberCount: Int = 0,
+    val error: ChatError? = null,
 ) {
-    /** Sending is only possible for accepted contacts with no unacknowledged key change. */
-    val canCompose: Boolean get() = !isRequest && trust != TrustState.KeyChanged
+    /** Sending is only possible for accepted contacts with no unacknowledged key change, or active groups. */
+    val canCompose: Boolean
+        get() = if (isGroup) groupStatus == GroupStatus.Active else !isRequest && trust != TrustState.KeyChanged
 }
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -59,46 +73,88 @@ class ChatViewModel @Inject constructor(
     accounts: AccountRepository,
     connectivity: ConnectivityRepository,
     private val messaging: MessagingRepository,
+    private val groups: GroupsRepository,
     private val active: ActiveConversation,
 ) : ViewModel() {
 
-    private val peer = UserId(savedState.toRoute<ChatDestination>().peerId)
+    private val peer = savedState.get<String>("peerId")?.takeIf { it.isNotEmpty() }?.let(::UserId)
+    private val groupId = savedState.get<String>("groupId")?.takeIf { it.isNotEmpty() }?.let(::GroupId)
     private val input = MutableStateFlow("")
+    private val error = MutableStateFlow<ChatError?>(null)
 
-    private val conversation = flow { accounts.getAccount()?.userId?.let { emit(ConversationId.direct(it, peer)) } }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+    private val conversation: StateFlow<ConversationId?> = (
+        groupId?.let { flowOf(it.conversation) }
+            ?: flow { accounts.getAccount()?.userId?.let { me -> peer?.let { emit(ConversationId.direct(me, it)) } } }
+        ).stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
-    private val contact = contacts.observeContacts().map { list -> list.firstOrNull { it.userId == peer } }
+    private data class Header(
+        val name: String,
+        val exists: Boolean,
+        val trust: TrustState,
+        val isRequest: Boolean,
+        val groupStatus: GroupStatus?,
+        val members: Int,
+    )
+
+    private val header = if (groupId != null) {
+        groups.observeGroup(groupId).map { g ->
+            Header(
+                g?.name.orEmpty(),
+                g != null,
+                TrustState.Unverified,
+                false,
+                g?.status,
+                g?.members?.count { !it.invited } ?: 0,
+            )
+        }
+    } else {
+        contacts.observeContacts().map { list ->
+            val c = list.firstOrNull { it.userId == peer }
+            Header(
+                c?.displayName.orEmpty(),
+                c != null,
+                c?.trust ?: TrustState.Unverified,
+                c?.isRequest == true,
+                null,
+                0,
+            )
+        }
+    }
 
     private val messages = conversation.filterNotNull().flatMapLatest { messaging.observeMessages(it) }
     private val typing = conversation.filterNotNull().flatMapLatest { messaging.observePeerTyping(it) }
 
-    val state: StateFlow<ChatUiState> = combine(contact, messages, typing, connectivity.isOnline, input) {
-            c,
-            msgs,
-            isTyping,
-            online,
-            text,
-        ->
+    val state: StateFlow<ChatUiState> = combine(
+        header,
+        messages,
+        typing,
+        combine(connectivity.isOnline, error) { online, e -> online to e },
+        input,
+    ) { h, msgs, isTyping, (online, e), text ->
         ChatUiState(
-            peerName = c?.displayName.orEmpty(),
-            content = if (c == null) ChatContent.Missing else ChatContent.Messages(group(msgs)),
-            peerTyping = isTyping,
+            peerName = h.name,
+            content = if (!h.exists) ChatContent.Missing else ChatContent.Messages(group(msgs)),
+            peerTyping = isTyping && groupId == null,
             offline = !online,
             input = text,
-            trust = c?.trust ?: TrustState.Unverified,
-            isRequest = c?.isRequest == true,
+            trust = h.trust,
+            isRequest = h.isRequest,
+            isGroup = groupId != null,
+            groupStatus = h.groupStatus,
+            memberCount = h.members,
+            error = e,
         )
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), ChatUiState())
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), ChatUiState(isGroup = groupId != null))
 
     fun onInput(text: String) {
         input.value = text
-        if (text.isNotBlank()) viewModelScope.launch { messaging.onTyping(peer) }
+        val p = peer
+        if (text.isNotBlank() && p != null) viewModelScope.launch { messaging.onTyping(p) }
     }
 
     init {
         // Every time the chat opens, compare the pinned key with what the server reports now.
-        viewModelScope.launch { contacts.refreshKey(peer) }
+        peer?.let { viewModelScope.launch { contacts.refreshKey(it) } }
     }
 
     fun send() {
@@ -106,23 +162,79 @@ class ChatViewModel @Inject constructor(
         if (text.isEmpty() || !state.value.canCompose) return
         viewModelScope.launch {
             // Keep the draft if sending is refused (e.g. a key change arrived meanwhile).
-            if (messaging.sendText(peer, text)) input.value = ""
+            val ok = when {
+                groupId != null -> messaging.sendGroupText(groupId, text)
+                peer != null -> messaging.sendText(peer, text)
+                else -> false
+            }
+            if (ok) input.value = ""
         }
     }
 
+    /** Sends a picked or recorded file; images are re-encoded (metadata stripped) before encryption. */
+    fun sendMedia(uri: String, kind: AttachmentKind, fileName: String? = null, durationMs: Long? = null) {
+        val id = conversation.value ?: return
+        if (!state.value.canCompose) return
+        viewModelScope.launch {
+            error.value = when (messaging.sendMedia(id, MediaSource(uri, kind, fileName, durationMs = durationMs))) {
+                SendResult.Ok -> null
+                SendResult.TooLarge -> ChatError.TooLarge
+                SendResult.Unreadable -> ChatError.Unreadable
+                SendResult.NotAllowed -> ChatError.NotAllowed
+            }
+            // A voice recording is our own plaintext temp file: gone once encrypted (or refused).
+            if (kind == AttachmentKind.Voice && uri.startsWith("file:")) {
+                runCatching { java.io.File(java.net.URI(uri)).delete() }
+            }
+        }
+    }
+
+    fun dismissError() {
+        error.value = null
+    }
+
+    fun react(messageId: String, emoji: String?) {
+        val id = conversation.value ?: return
+        viewModelScope.launch { messaging.react(id, messageId, emoji) }
+    }
+
+    fun download(messageId: String) {
+        val id = conversation.value ?: return
+        viewModelScope.launch { messaging.download(id, messageId) }
+    }
+
+    suspend fun attachmentBytes(messageId: String): ByteArray? =
+        conversation.value?.let { messaging.attachmentBytes(it, messageId) }
+
+    suspend fun exportAttachment(messageId: String): String? =
+        conversation.value?.let { messaging.exportAttachment(it, messageId) }
+
     fun acceptRequest() {
-        viewModelScope.launch { contacts.acceptRequest(peer) }
+        peer?.let { viewModelScope.launch { contacts.acceptRequest(it) } }
     }
 
     fun declineRequest(onDone: () -> Unit) {
+        val p = peer ?: return
         viewModelScope.launch {
-            contacts.declineRequest(peer)
+            contacts.declineRequest(p)
+            onDone()
+        }
+    }
+
+    fun acceptInvite() {
+        groupId?.let { viewModelScope.launch { groups.acceptInvite(it) } }
+    }
+
+    fun declineInvite(onDone: () -> Unit) {
+        val g = groupId ?: return
+        viewModelScope.launch {
+            groups.declineInvite(g)
             onDone()
         }
     }
 
     fun acknowledgeKeyChange() {
-        viewModelScope.launch { contacts.acknowledgeKeyChange(peer) }
+        peer?.let { viewModelScope.launch { contacts.acknowledgeKeyChange(it) } }
     }
 
     fun retry(messageId: String) {
@@ -148,10 +260,11 @@ class ChatViewModel @Inject constructor(
     }
 }
 
-/** Consecutive messages in the same direction form a visual group. */
+/** Consecutive messages from the same author form a visual group; group events stand alone. */
 internal fun group(messages: List<Message>): List<BubbleItem> = messages.mapIndexed { i, m ->
-    val sameAsPrev = i > 0 && messages[i - 1].outgoing == m.outgoing
-    val sameAsNext = i < messages.lastIndex && messages[i + 1].outgoing == m.outgoing
+    fun same(o: Message?) = o != null && !o.system && !m.system && o.outgoing == m.outgoing && o.author == m.author
+    val sameAsPrev = same(messages.getOrNull(i - 1))
+    val sameAsNext = same(messages.getOrNull(i + 1))
     val position = when {
         sameAsPrev && sameAsNext -> BubbleGroupPosition.Middle
         sameAsPrev -> BubbleGroupPosition.Last

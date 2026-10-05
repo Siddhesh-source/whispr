@@ -93,6 +93,7 @@ class MessagingUiTest {
         FakeAccounts(registered),
         FakeConnectivity(),
         messaging,
+        FakeGroups(),
         active,
     )
 

@@ -6,7 +6,7 @@ import org.signal.libsignal.protocol.message.CiphertextMessage
  * Framing around libsignal ciphertext inside an envelope's opaque payload:
  *
  *     payload := 0x01 (format v1) | type | libsignal serialized message
- *     type    := 0x01 PreKeySignalMessage | 0x02 SignalMessage
+ *     type    := 0x01 PreKeySignalMessage | 0x02 SignalMessage | 0x03 SenderKeyMessage (groups)
  *
  * Anything else is not ours and is dropped, so the server cannot inject
  * plaintext. This is framing only; all cryptography is libsignal's.
@@ -15,11 +15,13 @@ object WireFormat {
     const val VERSION: Byte = 0x01
     const val TYPE_PREKEY: Byte = 0x01
     const val TYPE_WHISPER: Byte = 0x02
+    const val TYPE_SENDER_KEY: Byte = 0x03
 
     fun encode(message: CiphertextMessage): ByteArray {
         val type = when (message.type) {
             CiphertextMessage.PREKEY_TYPE -> TYPE_PREKEY
             CiphertextMessage.WHISPER_TYPE -> TYPE_WHISPER
+            CiphertextMessage.SENDERKEY_TYPE -> TYPE_SENDER_KEY
             else -> error("unexpected libsignal message type ${message.type}")
         }
         return byteArrayOf(VERSION, type) + message.serialize()
@@ -29,7 +31,7 @@ object WireFormat {
     fun decode(payload: ByteArray): Pair<Byte, ByteArray>? {
         if (payload.size < 3 || payload[0] != VERSION) return null
         val type = payload[1]
-        if (type != TYPE_PREKEY && type != TYPE_WHISPER) return null
+        if (type != TYPE_PREKEY && type != TYPE_WHISPER && type != TYPE_SENDER_KEY) return null
         return type to payload.copyOfRange(2, payload.size)
     }
 }

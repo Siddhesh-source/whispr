@@ -25,11 +25,17 @@ import dev.whispr.data.db.DatabaseKey
 import dev.whispr.data.db.LazyKeyOpenHelperFactory
 import dev.whispr.data.db.WhisprDatabase
 import dev.whispr.data.identity.LibsignalIdentityRepository
+import dev.whispr.data.media.AndroidMediaPreparer
+import dev.whispr.data.media.MediaFiles
+import dev.whispr.data.media.MediaPreparer
+import dev.whispr.data.media.MediaService
 import dev.whispr.data.messaging.MessagingEngine
+import dev.whispr.data.messaging.RoomGroupsRepository
 import dev.whispr.data.messaging.RoomMessagingRepository
 import dev.whispr.data.messaging.RoomSettingsRepository
 import dev.whispr.data.network.AuthApi
 import dev.whispr.data.network.KeysApi
+import dev.whispr.data.network.MediaApi
 import dev.whispr.data.network.ServerConfig
 import dev.whispr.data.network.WhisprApi
 import dev.whispr.data.profile.RoomProfileRepository
@@ -38,6 +44,7 @@ import dev.whispr.domain.repository.AuthRepository
 import dev.whispr.domain.repository.ConnectivityRepository
 import dev.whispr.domain.repository.ContactsRepository
 import dev.whispr.domain.repository.EncryptionRepository
+import dev.whispr.domain.repository.GroupsRepository
 import dev.whispr.domain.repository.IdentityRepository
 import dev.whispr.domain.repository.MessagingRepository
 import dev.whispr.domain.repository.ProfileRepository
@@ -182,12 +189,50 @@ object DataModule {
     fun settingsRepository(db: WhisprDatabase): SettingsRepository = RoomSettingsRepository(db.settingDao())
 
     @Provides @Singleton
+    fun mediaApi(client: OkHttpClient, config: ServerConfig, tokens: TokenSource) = MediaApi(client, config, tokens)
+
+    @Provides @Singleton
+    fun mediaPreparer(@ApplicationContext context: Context): MediaPreparer =
+        AndroidMediaPreparer(context.contentResolver)
+
+    /** Encrypted blobs in no-backup storage; decrypted "open with" copies in the cache, cleared on start. */
+    @Provides @Singleton
+    fun mediaService(
+        @ApplicationContext context: Context,
+        db: WhisprDatabase,
+        crypto: SessionCrypto,
+        engine: MessagingEngine,
+        api: MediaApi,
+        preparer: MediaPreparer,
+        accounts: AccountRepository,
+    ) = MediaService(
+        db,
+        crypto,
+        engine.groups,
+        api,
+        preparer,
+        MediaFiles(File(context.noBackupFilesDir, "media"), File(context.cacheDir, "open")),
+        { accounts.getAccount()?.userId },
+        CoroutineScope(SupervisorJob() + Dispatchers.IO),
+    )
+
+    @Provides @Singleton
     fun messagingRepository(
         db: WhisprDatabase,
         engine: MessagingEngine,
         accounts: AccountRepository,
         settings: SettingsRepository,
-    ): MessagingRepository = RoomMessagingRepository(db, engine, accounts, settings)
+        media: MediaService,
+    ): MessagingRepository = RoomMessagingRepository(db, engine, accounts, settings, media)
+
+    @Provides @Singleton
+    fun groupsRepository(
+        db: WhisprDatabase,
+        engine: MessagingEngine,
+        accounts: AccountRepository,
+        identity: IdentityRepository,
+        preparer: MediaPreparer,
+    ): GroupsRepository = RoomGroupsRepository(db, engine, accounts, identity, preparer)
 
     @Provides @Singleton
     fun contactsRepository(

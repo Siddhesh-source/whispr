@@ -205,6 +205,9 @@ interface CryptoDao {
     @Query("SELECT * FROM messages WHERE peerId = :peerId AND messageId = :messageId")
     fun message(peerId: String, messageId: String): MessageEntity?
 
+    @Query("SELECT * FROM messages WHERE localOrder = :row")
+    fun messageByRow(row: Long): MessageEntity?
+
     @Query(
         "UPDATE messages SET body = :body, timestamp = :timestamp, placeholder = NULL WHERE localOrder = :localOrder",
     )

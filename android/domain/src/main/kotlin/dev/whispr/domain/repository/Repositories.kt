@@ -8,11 +8,17 @@ import dev.whispr.domain.model.ConnectionState
 import dev.whispr.domain.model.Contact
 import dev.whispr.domain.model.ConversationId
 import dev.whispr.domain.model.ConversationSummary
+import dev.whispr.domain.model.Group
+import dev.whispr.domain.model.GroupId
+import dev.whispr.domain.model.GroupResult
+import dev.whispr.domain.model.GroupRole
+import dev.whispr.domain.model.MediaSource
 import dev.whispr.domain.model.Message
 import dev.whispr.domain.model.MyProfile
 import dev.whispr.domain.model.PrivacySettings
 import dev.whispr.domain.model.ProfileResult
 import dev.whispr.domain.model.SafetyNumber
+import dev.whispr.domain.model.SendResult
 import dev.whispr.domain.model.SessionState
 import dev.whispr.domain.model.UserId
 import dev.whispr.domain.model.VerifyResult
@@ -128,6 +134,31 @@ interface MessagingRepository {
      */
     suspend fun sendText(peer: UserId, text: String): Boolean
 
+    /** Sends to every current group member, encrypted once with our sender key. False if we can't send there. */
+    suspend fun sendGroupText(group: GroupId, text: String): Boolean
+
+    /**
+     * Encrypts [source] on the device with a fresh key, uploads only the
+     * ciphertext, and sends the key and digest inside an encrypted message.
+     * [conversation] is a 1:1 or group conversation.
+     */
+    suspend fun sendMedia(conversation: ConversationId, source: MediaSource): SendResult
+
+    /** Sets (or with null removes) our reaction to [messageId]. */
+    suspend fun react(conversation: ConversationId, messageId: String, emoji: String?)
+
+    /** Downloads, verifies and stores a received attachment (it stays encrypted at rest). */
+    suspend fun download(conversation: ConversationId, messageId: String)
+
+    /** The decrypted bytes of a stored attachment, for display; null if not available. */
+    suspend fun attachmentBytes(conversation: ConversationId, messageId: String): ByteArray?
+
+    /**
+     * Writes a decrypted copy to a private cache file (deleted on next start)
+     * so another app can open it; returns its path.
+     */
+    suspend fun exportAttachment(conversation: ConversationId, messageId: String): String?
+
     /** Re-queues a message that failed permanently (user tapped retry). */
     suspend fun retry(messageId: String)
 
@@ -138,6 +169,39 @@ interface MessagingRepository {
     suspend fun onTyping(peer: UserId)
 
     fun observePeerTyping(conversation: ConversationId): Flow<Boolean>
+}
+
+/**
+ * Groups are kept by the members' devices: state changes are sent by admins
+ * over pairwise encrypted sessions, and the server only fans out ciphertext.
+ */
+interface GroupsRepository {
+    fun observeGroup(id: GroupId): Flow<Group?>
+
+    /** Creates a group with us as admin and [members] (contacts). */
+    suspend fun create(name: String, members: List<UserId>, avatar: AvatarSource? = null): GroupResult
+
+    suspend fun rename(id: GroupId, name: String): GroupResult
+
+    /** Sets (or with null clears) the group picture: scaled down, metadata stripped, encrypted. */
+    suspend fun setAvatar(id: GroupId, avatar: AvatarSource?): GroupResult
+
+    suspend fun addMembers(id: GroupId, members: List<UserId>): GroupResult
+
+    /** Removes [member]; every remaining member rotates their sender key. */
+    suspend fun removeMember(id: GroupId, member: UserId): GroupResult
+
+    suspend fun setRole(id: GroupId, member: UserId, role: GroupRole): GroupResult
+
+    /** Invites [members]: they join only if they accept. */
+    suspend fun invite(id: GroupId, members: List<UserId>): GroupResult
+
+    suspend fun acceptInvite(id: GroupId): GroupResult
+
+    suspend fun declineInvite(id: GroupId): GroupResult
+
+    /** Leaves the group. A sole admin first hands the role to the longest-standing member. */
+    suspend fun leave(id: GroupId): GroupResult
 }
 
 interface SettingsRepository {

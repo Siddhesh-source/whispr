@@ -6,6 +6,8 @@ import dev.whispr.data.crypto.ParkReason
 import dev.whispr.data.crypto.PreKeyMaintainer
 import dev.whispr.data.crypto.SessionCrypto
 import dev.whispr.data.crypto.SessionStatus
+import dev.whispr.data.db.GroupSendEntity
+import dev.whispr.data.db.MessageEntity
 import dev.whispr.data.db.OutboxEntity
 import dev.whispr.data.db.ParkedRecipientEntity
 import dev.whispr.data.db.SentEnvelopeEntity
@@ -17,11 +19,14 @@ import dev.whispr.data.network.ApiResult
 import dev.whispr.data.network.WhisprApi
 import dev.whispr.domain.model.ConnectionState
 import dev.whispr.domain.model.ConversationId
+import dev.whispr.domain.model.GroupStatus
+import dev.whispr.domain.model.MessageStatus
 import dev.whispr.domain.model.UserId
 import dev.whispr.domain.repository.AccountRepository
 import dev.whispr.domain.repository.ConnectivityRepository
 import java.time.Instant
 import java.util.Base64
+import java.util.UUID
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.random.Random
@@ -134,6 +139,8 @@ class MessagingEngine(
 
     val resets = ResetCoordinator(db, crypto, clock)
 
+    val groups = GroupManager(db, crypto, clock)
+
     val pipeline = IncomingPipeline(
         db,
         crypto,
@@ -156,6 +163,7 @@ class MessagingEngine(
                 resetSignal.trySend(Unit)
             }
         },
+        groups = groups,
         clock = clock,
     )
 
@@ -180,6 +188,30 @@ class MessagingEngine(
             crypto.encryptTransient(peer.value, PayloadCodec.encode(payload))?.let {
                 session.sendTransient(peer.value, conversation.value, it)
             }
+        }
+    }
+
+    /** Runs [block] as one database transaction on the crypto thread. */
+    suspend fun <T> transaction(block: () -> T): T = crypto.transaction(block)
+
+    /**
+     * Stores [message] (if any) and queues [payload] for [groupId] in one
+     * transaction. Returns false, storing nothing, if we can't send there.
+     * With nobody else in the group the message is simply Sent.
+     */
+    suspend fun sendToGroup(groupId: String, message: MessageEntity?, payload: Payload): Boolean {
+        val me = accounts.getAccount()?.userId?.value ?: return false
+        return crypto.transaction {
+            val id = message?.messageId ?: UUID.randomUUID().toString()
+            val ts = message?.timestamp ?: clock()
+            val recipients = groups.enqueueGroup(me, groupId, id, PayloadCodec.encode(payload), ts)
+                ?: return@transaction false
+            message?.let {
+                dao.insertMessage(
+                    if (recipients.isEmpty()) it.copy(status = MessageStatus.Sent.name) else it,
+                )
+            }
+            true
         }
     }
 
@@ -241,7 +273,7 @@ class MessagingEngine(
             val session = LiveSession(ws)
             live = session
             state.value = ConnectionState.Connected
-            val pump = launch { pumpOutbox(session) }
+            val pump = launch { pumpOutbox(session, me.value) }
             val upkeep = launch { upkeep(me.value) }
             for (event in events) {
                 when (event) {
@@ -266,6 +298,8 @@ class MessagingEngine(
             withTimeoutOrNull(timings.resetTickMs) { resetSignal.receive() }
             try {
                 resets.run(me)
+                // Group messages whose sender key never came are dropped after 30 days.
+                crypto.transaction { db.groupDao().purgeHeld(clock() - HELD_GROUP_TTL_MS) }
             } catch (c: CancellationException) {
                 throw c
             } catch (_: Exception) {
@@ -279,7 +313,7 @@ class MessagingEngine(
      * Sends the head of the first unblocked lane, resending it until the
      * server accepts or rejects it. One envelope is in flight at a time.
      */
-    private suspend fun pumpOutbox(session: LiveSession) {
+    private suspend fun pumpOutbox(session: LiveSession, me: String) {
         while (true) {
             val now = clock()
             val head = crypto.transaction { dao.outboxHead(now) }
@@ -292,16 +326,29 @@ class MessagingEngine(
                 ) { outboxSignal.receive() }
                 continue
             }
-            val wire = head.ciphertext ?: prepare(head) ?: continue
-            session.send(
-                SendFrame(
-                    id = head.messageId,
-                    conversationId = head.conversationId,
-                    recipientId = head.recipientId,
-                    clientTs = Instant.ofEpochMilli(head.clientTs).toString(),
-                    payload = Base64.getEncoder().encodeToString(wire),
-                ),
-            )
+            if (head.groupId != null) {
+                val (wire, recipients) = prepareGroup(me, head) ?: continue
+                session.sendMulti(
+                    SendMultiFrame(
+                        id = head.messageId,
+                        conversationId = head.conversationId,
+                        recipientIds = recipients,
+                        clientTs = Instant.ofEpochMilli(head.clientTs).toString(),
+                        payload = Base64.getEncoder().encodeToString(wire),
+                    ),
+                )
+            } else {
+                val wire = head.ciphertext ?: prepare(head) ?: continue
+                session.send(
+                    SendFrame(
+                        id = head.messageId,
+                        conversationId = head.conversationId,
+                        recipientId = head.recipientId,
+                        clientTs = Instant.ofEpochMilli(head.clientTs).toString(),
+                        payload = Base64.getEncoder().encodeToString(wire),
+                    ),
+                )
+            }
             // Wait for accepted/rejected to remove it, or resend after a while.
             // Duplicates are harmless: the server deduplicates by message ID.
             withTimeoutOrNull(timings.resendAfterMs) {
@@ -339,6 +386,38 @@ class MessagingEngine(
             is EncryptResult.Blocked -> park(head, result.reason)
         }
     }
+
+    /**
+     * The head of a group lane: sent to whoever of its recipients is still an
+     * active member, encrypted once with our current sender key. If a
+     * removal rotated our key after this was queued, the new key goes out
+     * now (recipients hold the message until it arrives).
+     */
+    private suspend fun prepareGroup(me: String, head: OutboxEntity): Pair<ByteArray, List<String>>? =
+        crypto.transaction {
+            val gdao = db.groupDao()
+            val g = gdao.group(head.groupId!!)
+            if (g == null || g.status != GroupStatus.Active.name) {
+                gdao.removeOutbox(head.messageId)
+                gdao.setStatus(head.messageId, MessageStatus.Failed.name)
+                return@transaction null
+            }
+            val current = groups.activeMembers(g.groupId).toSet() - me
+            val recipients = head.recipients.orEmpty().split(',').filter { it.isNotEmpty() && it in current }
+            if (recipients.isEmpty()) {
+                gdao.removeOutbox(head.messageId)
+                gdao.setStatus(head.messageId, MessageStatus.Sent.name)
+                return@transaction null
+            }
+            groups.ensureShares(me, g, recipients)
+            val wire = head.ciphertext
+                ?: crypto.encryptGroup(UUID.fromString(g.myDistributionId), head.payload).also {
+                    dao.setOutboxCiphertext(head.messageId, it)
+                }
+            gdao.setOutboxRecipients(head.messageId, recipients.joinToString(","))
+            gdao.putGroupSends(recipients.map { GroupSendEntity(head.messageId, it) })
+            wire to recipients
+        }
 
     private suspend fun park(head: OutboxEntity, reason: ParkReason): ByteArray? {
         if (reason == ParkReason.UnknownUser) {
@@ -411,6 +490,10 @@ class MessagingEngine(
             ws.send(json.encodeToString(SendFrame.serializer(), frame))
         }
 
+        fun sendMulti(frame: SendMultiFrame) {
+            ws.send(json.encodeToString(SendMultiFrame.serializer(), frame))
+        }
+
         fun ack(seq: Long) {
             ws.send(json.encodeToString(AckFrame.serializer(), AckFrame(seq = seq)))
         }
@@ -463,6 +546,7 @@ class MessagingEngine(
         const val UNKNOWN_CONTACT = "Unknown contact"
         private const val HTTP_UNAUTHORIZED = 401
         private const val MAX_SHIFT = 20
+        private const val HELD_GROUP_TTL_MS = 30L * 24 * 60 * 60 * 1000
 
         // Retried by resending the outbox head later.
         private val RETRYABLE = setOf("rate_limited", "internal")
@@ -487,5 +571,15 @@ private data class TransientFrame(
     val type: String = "transient",
     @SerialName("recipient_id") val recipientId: String,
     @SerialName("conversation_id") val conversationId: String,
+    val payload: String,
+)
+
+@Serializable
+private data class SendMultiFrame(
+    val type: String = "send_multi",
+    val id: String,
+    @SerialName("conversation_id") val conversationId: String,
+    @SerialName("recipient_ids") val recipientIds: List<String>,
+    @SerialName("client_ts") val clientTs: String,
     val payload: String,
 )

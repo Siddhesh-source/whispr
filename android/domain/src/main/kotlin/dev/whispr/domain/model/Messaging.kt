@@ -69,6 +69,13 @@ data class Message(
     val status: MessageStatus?,
     /** Set when this is a stand-in for a message that could not be shown. */
     val notice: MessageNotice? = null,
+    /** Incoming group messages: who wrote it. */
+    val author: UserId? = null,
+    val authorName: String? = null,
+    val attachment: Attachment? = null,
+    val reactions: List<Reaction> = emptyList(),
+    /** A group event ("Sam added Alex"), shown centred, never sent. */
+    val system: Boolean = false,
 )
 
 /** Why a message is shown as a stand-in instead of its text. */
@@ -86,12 +93,16 @@ enum class MessageNotice {
     Held,
 }
 
+/** A row in the chat list: a 1:1 chat ([peer]) or a group ([group]). */
 data class ConversationSummary(
     val id: ConversationId,
-    val peer: Contact,
+    val peer: Contact?,
     val lastMessage: Message?,
     val unreadCount: Int,
-)
+    val group: GroupSummary? = null,
+) {
+    val title: String get() = group?.name ?: peer?.displayName.orEmpty()
+}
 
 enum class ConnectionState { Offline, Connecting, Connected }
 

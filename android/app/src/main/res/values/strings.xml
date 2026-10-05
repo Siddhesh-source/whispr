@@ -155,4 +155,85 @@
     <string name="profile_error_invalid_nickname">Nicknames are 3 to 32 letters, digits or _, starting with a letter.</string>
     <string name="profile_error_unavailable">That nickname is busy. Try another.</string>
     <string name="profile_error_network">Couldn\'t reach the server. Check your connection and try again.</string>
+
+    <!-- Groups and media -->
+    <string name="chats_new_group">New group</string>
+    <string name="chats_author_prefix">%1$s: %2$s</string>
+    <string name="chats_invite_preview">Invited you to the group</string>
+    <string name="chats_removed_preview">You\'re no longer in this group</string>
+    <string name="chats_preview_photo">Photo</string>
+    <string name="chats_preview_file">File</string>
+    <string name="chats_preview_voice">Voice message</string>
+
+    <string name="chat_group_info">Group info</string>
+    <plurals name="chat_group_members">
+        <item quantity="one">%d member</item>
+        <item quantity="other">%d members</item>
+    </plurals>
+    <string name="chat_group_empty_message">Messages here are end-to-end encrypted for every member.</string>
+    <string name="chat_invite_message">You\'re invited to %1$s. Nothing from the group reaches you until you accept.</string>
+    <string name="chat_group_removed">You\'re no longer in this group.</string>
+    <string name="chat_group_left">You left this group.</string>
+    <string name="chat_attach">Attach</string>
+    <string name="chat_attach_photo">Photo</string>
+    <string name="chat_attach_file">File</string>
+    <string name="chat_record">Record a voice message</string>
+    <string name="chat_record_stop">Stop and send</string>
+    <string name="chat_recording">Recording…</string>
+    <string name="chat_voice_play">Play voice message</string>
+    <string name="chat_voice_pause">Pause</string>
+    <string name="chat_voice_label">Voice message, %1$s</string>
+    <string name="chat_attachment_photo">Photo</string>
+    <string name="chat_attachment_file">File</string>
+    <string name="chat_attachment_open">Open</string>
+    <string name="chat_attachment_download">Download</string>
+    <string name="chat_attachment_expired">No longer available</string>
+    <string name="chat_attachment_corrupt">Couldn\'t verify this file</string>
+    <string name="chat_attachment_no_app">No app on this phone can open this file.</string>
+    <string name="chat_reaction_title">React</string>
+    <string name="chat_reaction_remove">Remove mine</string>
+    <string name="chat_reaction_cancel">Cancel</string>
+    <string name="chat_error_ok">OK</string>
+    <string name="chat_error_too_large">That file is larger than 25 MB.</string>
+    <string name="chat_error_unreadable">Couldn\'t read that file.</string>
+    <string name="chat_error_not_allowed">You can\'t send here right now.</string>
+
+    <string name="group_new_title">New group</string>
+    <string name="group_create">Create group</string>
+    <string name="group_name_label">Group name</string>
+    <string name="group_picture_add">Add a group picture</string>
+    <string name="group_picture_change">Change picture</string>
+    <plurals name="group_pick_members">
+        <item quantity="one">Members (%d selected)</item>
+        <item quantity="other">Members (%d selected)</item>
+    </plurals>
+    <string name="group_selected">Selected</string>
+    <string name="group_not_selected">Not selected</string>
+    <string name="group_no_contacts_title">No contacts yet</string>
+    <string name="group_no_contacts_message">Add people by scanning their code first.</string>
+    <string name="group_info_title">Group info</string>
+    <string name="group_encrypted_note">The name, picture and member list are end-to-end encrypted.</string>
+    <string name="group_rename">Rename</string>
+    <string name="group_save">Save</string>
+    <plurals name="group_members">
+        <item quantity="one">%d member</item>
+        <item quantity="other">%d members</item>
+    </plurals>
+    <string name="group_add_members">Add members</string>
+    <string name="group_invite_members">Invite</string>
+    <string name="group_add">Add</string>
+    <string name="group_invite">Send invites</string>
+    <string name="group_you">You</string>
+    <string name="group_role_admin">Admin</string>
+    <string name="group_role_invited">Invited</string>
+    <string name="group_manage_member">Manage %1$s</string>
+    <string name="group_make_admin">Make admin</string>
+    <string name="group_dismiss_admin">Dismiss as admin</string>
+    <string name="group_remove_member">Remove from group</string>
+    <string name="group_leave">Leave group</string>
+    <string name="group_leave_title">Leave this group?</string>
+    <string name="group_leave_message">You won\'t receive new messages. Everyone left gets new encryption keys.</string>
+    <string name="group_error_not_allowed">Only admins can do that.</string>
+    <string name="group_error_invalid">That didn\'t work. Check the name and members.</string>
+    <string name="group_error_key_changed">A member\'s safety number changed. Review it in your chat with them first.</string>
 </resources>

@@ -9,6 +9,8 @@ import androidx.navigation.toRoute
 import dev.whispr.android.ui.chat.ChatRoute
 import dev.whispr.android.ui.chats.ChatsRoute
 import dev.whispr.android.ui.contacts.AddContactRoute
+import dev.whispr.android.ui.groups.GroupInfoRoute
+import dev.whispr.android.ui.groups.NewGroupRoute
 import dev.whispr.android.ui.onboarding.OnboardingRoute
 import dev.whispr.android.ui.profile.EditProfileRoute
 import dev.whispr.android.ui.profile.MyCodeRoute
@@ -29,6 +31,12 @@ import kotlinx.serialization.Serializable
 @Serializable data class ChatDestination(val peerId: String)
 
 @Serializable data class VerifyDestination(val peerId: String)
+
+@Serializable data class GroupChatDestination(val groupId: String)
+
+@Serializable data class GroupInfoDestination(val groupId: String)
+
+@Serializable object NewGroupDestination
 
 @Serializable object ScanContactDestination
 
@@ -60,6 +68,8 @@ fun WhisprNavHost(start: StartDestination) {
                 onMyCode = { nav.navigate(MyCodeDestination) { launchSingleTop = true } },
                 onOpenChat = { peer -> nav.navigate(ChatDestination(peer.value)) { launchSingleTop = true } },
                 onNewChat = { nav.navigate(AddContactDestination) { launchSingleTop = true } },
+                onOpenGroup = { g -> nav.navigate(GroupChatDestination(g.value)) { launchSingleTop = true } },
+                onNewGroup = { nav.navigate(NewGroupDestination) { launchSingleTop = true } },
             )
         }
         composable<AddContactDestination> {
@@ -87,6 +97,33 @@ fun WhisprNavHost(start: StartDestination) {
             ChatRoute(onBack = { nav.popBackStack() }, onVerify = { nav.navigate(VerifyDestination(peer)) })
         }
         composable<VerifyDestination> { VerifyRoute(onBack = { nav.popBackStack() }) }
+        composable<GroupChatDestination> { entry ->
+            val group = entry.toRoute<GroupChatDestination>().groupId
+            ChatRoute(
+                onBack = { nav.popBackStack() },
+                onVerify = {},
+                onGroupInfo = { nav.navigate(GroupInfoDestination(group)) { launchSingleTop = true } },
+            )
+        }
+        composable<GroupInfoDestination> {
+            GroupInfoRoute(
+                onBack = { nav.popBackStack() },
+                onLeft = { nav.popBackStack<ChatsDestination>(inclusive = false) },
+            )
+        }
+        composable<NewGroupDestination> {
+            NewGroupRoute(
+                onBack = { nav.popBackStack() },
+                onCreated = { g ->
+                    nav.navigate(GroupChatDestination(g.value)) {
+                        popUpTo<NewGroupDestination> {
+                            inclusive =
+                                true
+                        }
+                    }
+                },
+            )
+        }
         composable<EditProfileDestination> { EditProfileRoute(onBack = { nav.popBackStack() }) }
         composable<SettingsDestination> {
             SettingsRoute(

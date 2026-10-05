@@ -10,6 +10,7 @@ import dev.whispr.android.di.ApplicationScope
 import dev.whispr.android.notifications.MessageNotifier
 import dev.whispr.android.push.PushManager
 import dev.whispr.android.session.SessionKeeper
+import dev.whispr.data.media.MediaService
 import dev.whispr.data.messaging.MessagingEngine
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
@@ -23,6 +24,8 @@ class WhisprApp : Application() {
 
     @Inject lateinit var engine: Lazy<MessagingEngine>
 
+    @Inject lateinit var media: Lazy<MediaService>
+
     @Inject lateinit var notifier: Lazy<MessageNotifier>
 
     @Inject lateinit var push: Lazy<PushManager>
@@ -35,6 +38,8 @@ class WhisprApp : Application() {
         scope.launch {
             sessionKeeper.get().start()
             engine.get().start()
+            // Uploads cut off by the process dying; also clears decrypted exports.
+            media.get().resumePending()
         }
         scope.launch { notifier.get().run() }
         scope.launch { push.get().start() }

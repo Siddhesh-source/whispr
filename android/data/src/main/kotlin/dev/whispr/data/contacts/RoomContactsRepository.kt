@@ -116,9 +116,11 @@ class RoomContactsRepository(
             dao.flagKeyChange(userId, key)
             return AddContactResult.KeyMismatch
         }
-        val entity = (existing ?: ContactEntity(userId, name, key, clock())).copy(identityKey = key, isRequest = false)
+        // A group member we knew only from a group becomes a full contact.
+        val entity = (existing ?: ContactEntity(userId, name, key, clock()))
+            .copy(identityKey = key, isRequest = false, hidden = false)
         dao.upsert(entity)
-        if (existing == null || existing.isRequest) sendContactRequest(UserId(userId))
+        if (existing == null || existing.isRequest || existing.hidden) sendContactRequest(UserId(userId))
         return AddContactResult.Added(entity.toDomain())
     }
 

@@ -25,6 +25,8 @@ data class ContactEntity(
     @ColumnInfo(defaultValue = "0") val isRequest: Boolean = false,
     /** The different key the server reported, held until the user acknowledges it. */
     val pendingKey: ByteArray? = null,
+    /** A group member we have no 1:1 chat with: pinned for sessions, not listed as a contact. */
+    @ColumnInfo(defaultValue = "0") val hidden: Boolean = false,
 )
 
 /**
@@ -60,6 +62,8 @@ data class MessageEntity(
     @ColumnInfo(defaultValue = "0") val readByMe: Boolean = false,
     /** Null for a real message; otherwise a [Placeholder] state name. */
     val placeholder: String? = null,
+    /** A local group event ("Sam added Alex"); never sent. */
+    @ColumnInfo(defaultValue = "0") val system: Boolean = false,
 )
 
 /** States of a "couldn't decrypt" stand-in. They only move forward, except that a late resend may still recover an unrecoverable one. */
@@ -95,6 +99,9 @@ data class OutboxEntity(
      * head of its lane, so resends are byte-identical.
      */
     val ciphertext: ByteArray? = null,
+    /** Set for a group message: sent with send_multi to [recipients] (comma-separated, fixed at send time). */
+    val groupId: String? = null,
+    val recipients: String? = null,
 )
 
 @Entity(tableName = "settings")
@@ -117,8 +124,15 @@ data class ConversationRow(
 
 @Dao
 interface ContactDao {
-    @Query("SELECT * FROM contacts ORDER BY displayName COLLATE NOCASE")
+    @Query("SELECT * FROM contacts WHERE hidden = 0 ORDER BY displayName COLLATE NOCASE")
     fun observeAll(): Flow<List<ContactEntity>>
+
+    /** Every contact, including group members we only know from groups (for names). */
+    @Query("SELECT * FROM contacts")
+    fun observeEveryone(): Flow<List<ContactEntity>>
+
+    @Query("SELECT * FROM contacts")
+    suspend fun everyone(): List<ContactEntity>
 
     @Query("SELECT * FROM contacts WHERE userId = :userId")
     suspend fun get(userId: String): ContactEntity?
@@ -164,15 +178,18 @@ interface MessageDao {
         SELECT c.userId AS peerId, c.displayName, c.identityKey, c.trust, c.isRequest,
                m.messageId, m.outgoing, m.body, m.timestamp, m.status, m.placeholder,
                (SELECT COUNT(*) FROM messages u
-                 WHERE u.peerId = c.userId AND u.outgoing = 0 AND u.readByMe = 0) AS unread
+                 WHERE u.peerId = c.userId AND u.outgoing = 0 AND u.readByMe = 0
+                   AND u.conversationId NOT IN (SELECT groupId FROM groups)) AS unread
         FROM contacts c
-        LEFT JOIN messages m ON m.localOrder = (SELECT MAX(localOrder) FROM messages x WHERE x.peerId = c.userId)
+        LEFT JOIN messages m ON m.localOrder = (SELECT MAX(localOrder) FROM messages x WHERE x.peerId = c.userId
+            AND x.conversationId NOT IN (SELECT groupId FROM groups))
+        WHERE c.hidden = 0
         ORDER BY COALESCE(m.timestamp, c.addedAt) DESC
         """,
     )
     fun observeConversations(): Flow<List<ConversationRow>>
 
-    @Query("DELETE FROM messages WHERE peerId = :peerId")
+    @Query("DELETE FROM messages WHERE peerId = :peerId AND conversationId NOT IN (SELECT groupId FROM groups)")
     suspend fun deleteFrom(peerId: String)
 
     @Query("SELECT * FROM messages WHERE conversationId = :conversationId ORDER BY localOrder")

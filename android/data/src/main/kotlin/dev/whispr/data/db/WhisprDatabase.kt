@@ -71,13 +71,23 @@ interface AccountDao {
         ParkedRecipientEntity::class,
         HeldEnvelopeEntity::class,
         DecryptAttemptEntity::class,
+        GroupEntity::class,
+        GroupMemberEntity::class,
+        SenderKeyEntity::class,
+        GroupKeyShareEntity::class,
+        GroupDistributionEntity::class,
+        HeldGroupEnvelopeEntity::class,
+        GroupSendEntity::class,
+        AttachmentEntity::class,
+        ReactionEntity::class,
     ],
-    version = 4,
+    version = 5,
     exportSchema = true,
     autoMigrations = [
         AutoMigration(from = 1, to = 2),
         AutoMigration(from = 2, to = 3),
         AutoMigration(from = 3, to = 4),
+        AutoMigration(from = 4, to = 5),
     ],
 )
 abstract class WhisprDatabase : RoomDatabase() {
@@ -88,6 +98,8 @@ abstract class WhisprDatabase : RoomDatabase() {
     abstract fun settingDao(): SettingDao
     abstract fun messagingTransactions(): MessagingTransactions
     abstract fun cryptoDao(): CryptoDao
+    abstract fun groupDao(): GroupDao
+    abstract fun groupQueries(): GroupQueries
 
     companion object {
         const val NAME = "whispr.db"

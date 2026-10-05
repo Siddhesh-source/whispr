@@ -1,20 +1,25 @@
 package dev.whispr.data.messaging
 
 import dev.whispr.data.crypto.DecryptResult
+import dev.whispr.data.crypto.GroupDecryptResult
 import dev.whispr.data.crypto.SessionCrypto
 import dev.whispr.data.crypto.SignalStore
+import dev.whispr.data.crypto.WireFormat
 import dev.whispr.data.db.ContactEntity
 import dev.whispr.data.db.CryptoDao
 import dev.whispr.data.db.DecryptAttemptEntity
 import dev.whispr.data.db.HeldEnvelopeEntity
+import dev.whispr.data.db.HeldGroupEnvelopeEntity
 import dev.whispr.data.db.MessageEntity
 import dev.whispr.data.db.OutboxEntity
 import dev.whispr.data.db.PendingResetEntity
 import dev.whispr.data.db.Placeholder
+import dev.whispr.data.db.ReactionEntity
 import dev.whispr.data.db.SeenEnvelopeEntity
 import dev.whispr.data.db.WhisprDatabase
 import dev.whispr.data.network.UserResponse
 import dev.whispr.domain.model.ConversationId
+import dev.whispr.domain.model.GroupStatus
 import dev.whispr.domain.model.UserId
 import java.util.Base64
 import java.util.UUID
@@ -58,35 +63,30 @@ class IncomingPipeline(
     private val crypto: SessionCrypto,
     private val lookup: suspend (userId: String) -> UserResponse?,
     private val events: PipelineEvents,
+    private val groups: GroupManager,
     private val clock: () -> Long = System::currentTimeMillis,
 ) {
     private val dao: CryptoDao get() = db.cryptoDao()
 
     suspend fun process(me: String, e: IncomingEnvelope, released: Boolean = false): Boolean {
         if (e.kind == KIND_DELIVERED) {
-            e.refId?.let { ref -> crypto.transaction { delivered(ref) } }
+            e.refId?.let { ref -> crypto.transaction { delivered(e.sender, ref) } }
             return true
         }
         if (!released && crypto.transaction { dao.seen(e.sender, e.id) }) return true
+        if (WireFormat.decode(e.payload)?.first == WireFormat.TYPE_SENDER_KEY) return processGroup(me, e, released)
         val result = try {
             crypto.decrypt(e.sender, e.payload) { plaintext -> apply(me, e, plaintext) }
         } catch (c: CancellationException) {
             throw c
         } catch (ex: Exception) {
-            // Unexpected (e.g. storage) failure: don't ack, so the envelope is
-            // redelivered. After 3 attempts, even across restarts, give up on it.
-            val count = crypto.transaction {
-                ((dao.attempts(e.sender, e.id) ?: 0) + 1).also {
-                    dao.putAttempts(DecryptAttemptEntity(e.sender, e.id, it))
-                }
-            }
-            if (count < MAX_ATTEMPTS) throw ex
-            DecryptResult.Failed("poison")
+            if (poisoned(e, ex)) DecryptResult.Failed("poison") else throw ex
         }
         when (result) {
             is DecryptResult.Ok -> {
                 if (released) crypto.transaction { dao.releaseHeld(e.sender, e.id) }
                 result.value.notify?.let { (conv, name, body) -> events.onText(conv, name, body) }
+                result.value.releaseGroup.forEach { releaseGroupHeld(me, it) }
                 if (result.usedOneTimeKey) events.onOneTimeKeyUsed()
                 if (result.value.lookupSender) refreshStranger(e.sender)
             }
@@ -109,6 +109,124 @@ class IncomingPipeline(
             }
         }
         return true
+    }
+
+    /**
+     * Unexpected (e.g. storage) failure: the caller doesn't ack, so the
+     * envelope is redelivered. After 3 attempts, even across restarts, give up.
+     */
+    private suspend fun poisoned(e: IncomingEnvelope, ex: Exception): Boolean {
+        val count = crypto.transaction {
+            ((dao.attempts(e.sender, e.id) ?: 0) + 1).also {
+                dao.putAttempts(DecryptAttemptEntity(e.sender, e.id, it))
+            }
+        }
+        if (count < MAX_ATTEMPTS) return false
+        return ex !is CancellationException
+    }
+
+    /**
+     * A group message (sender key). It is shown only if we hold the sender's
+     * key for its distribution, that distribution belongs to an active group
+     * of ours, and the sender is a current member. Otherwise it is held
+     * encrypted until their key or the group state arrives (30 days at most).
+     */
+    private suspend fun processGroup(me: String, e: IncomingEnvelope, released: Boolean): Boolean {
+        val gdao = db.groupDao()
+        val distribution = crypto.groupDistributionId(e.payload)
+        val target = distribution?.let {
+            crypto.transaction {
+                val groupId = gdao.distributionGroup(e.sender, it.toString()) ?: return@transaction HOLD
+                val g = gdao.group(groupId) ?: return@transaction HOLD
+                when {
+                    g.status == GroupStatus.Removed.name || g.status == GroupStatus.Left.name -> DROP
+                    !groups.accepts(me, groupId, e.sender) -> HOLD
+                    else -> groupId
+                }
+            }
+        }
+        if (target == null || target == DROP) {
+            crypto.transaction {
+                dao.markSeen(SeenEnvelopeEntity(e.sender, e.id, clock()))
+                gdao.releaseHeld(e.sender, e.id)
+            }
+            return true
+        }
+        if (target == HOLD) {
+            if (!released) holdGroup(e)
+            return true
+        }
+        val result = try {
+            crypto.decryptGroup(e.sender, e.payload) { plaintext -> applyGroup(me, e, target, plaintext) }
+        } catch (c: CancellationException) {
+            throw c
+        } catch (ex: Exception) {
+            if (poisoned(e, ex)) GroupDecryptResult.Failed("poison") else throw ex
+        }
+        when (result) {
+            is GroupDecryptResult.Ok -> {
+                if (released) crypto.transaction { gdao.releaseHeld(e.sender, e.id) }
+                result.value.notify?.let { (conv, name, body) -> events.onText(conv, name, body) }
+            }
+            GroupDecryptResult.Replay -> crypto.transaction {
+                dao.markSeen(SeenEnvelopeEntity(e.sender, e.id, clock()))
+                gdao.releaseHeld(e.sender, e.id)
+            }
+            GroupDecryptResult.NoSenderKey -> if (!released) holdGroup(e)
+            is GroupDecryptResult.Failed -> crypto.transaction {
+                dao.markSeen(SeenEnvelopeEntity(e.sender, e.id, clock()))
+                gdao.releaseHeld(e.sender, e.id)
+                // Groups have no resend protocol: the gap is shown, not hidden.
+                dao.insertMessage(
+                    MessageEntity(
+                        messageId = e.id,
+                        conversationId = target,
+                        peerId = e.sender,
+                        outgoing = false,
+                        body = "",
+                        timestamp = e.serverTs,
+                        status = null,
+                        placeholder = Placeholder.Unrecoverable.name,
+                    ),
+                )
+            }
+        }
+        return true
+    }
+
+    private suspend fun holdGroup(e: IncomingEnvelope) = crypto.transaction {
+        dao.markSeen(SeenEnvelopeEntity(e.sender, e.id, clock()))
+        db.groupDao().hold(HeldGroupEnvelopeEntity(e.sender, e.id, e.payload, clock(), e.seq))
+    }
+
+    /** [sender]'s key or our group state changed: retry what we held from them, in arrival order. */
+    suspend fun releaseGroupHeld(me: String, sender: String) {
+        for (row in crypto.transaction { db.groupDao().held(sender) }) {
+            process(
+                me,
+                IncomingEnvelope(row.seq, row.transportId, sender, KIND_ENVELOPE, null, row.receivedAt, row.ciphertext),
+                released = true,
+            )
+        }
+    }
+
+    /** Runs inside the group decrypt transaction. */
+    private fun applyGroup(me: String, e: IncomingEnvelope, groupId: String, plaintext: ByteArray): Applied {
+        dao.markSeen(SeenEnvelopeEntity(e.sender, e.id, clock()))
+        dao.clearAttempts(e.sender, e.id)
+        val p = PayloadCodec.decode(plaintext)
+        val group = db.groupDao().group(groupId)?.name.orEmpty()
+        return when {
+            p is Payload.Text && p.g == groupId ->
+                applyContent(ConversationId(groupId), e, p.mid, p.ts, null, p.body, null, group)
+            p is Payload.Media && p.g == groupId ->
+                applyContent(ConversationId(groupId), e, p.mid, p.ts, null, "", p.a, group)
+            p is Payload.Reaction && p.g == groupId -> {
+                applyReaction(groupId, e.sender, p)
+                Applied()
+            }
+            else -> Applied() // wrong group, a pairwise-only kind, or unknown: drop
+        }
     }
 
     /** Typing indicators: best effort, never stored; failures are ignored. */
@@ -159,17 +277,28 @@ class IncomingPipeline(
         )
     }
 
-    private fun delivered(ref: String) {
+    private fun delivered(sender: String, ref: String) {
+        val gdao = db.groupDao()
+        if (gdao.groupDelivered(ref, sender) > 0) {
+            // A group message is Delivered once every recipient has it.
+            if (gdao.undelivered(ref) == 0) dao.markDelivered(ref)
+            return
+        }
         val sent = dao.sent(ref)
         when {
             sent == null -> dao.markDelivered(ref)
-            sent.kind == KIND_TEXT -> dao.markDelivered(sent.mid ?: ref)
+            sent.kind == KIND_TEXT || sent.kind == KIND_MEDIA -> dao.markDelivered(sent.mid ?: ref)
         }
         dao.resetDelivered(ref, clock())
     }
 
     /** What to do after the decrypt transaction committed. */
-    class Applied(val notify: Triple<ConversationId, String, String>? = null, val lookupSender: Boolean = false)
+    class Applied(
+        val notify: Triple<ConversationId, String, String>? = null,
+        val lookupSender: Boolean = false,
+        /** Senders whose held group messages may now be decryptable. */
+        val releaseGroup: List<String> = emptyList(),
+    )
 
     /** Runs inside the decrypt transaction on the crypto thread. */
     private fun apply(me: String, e: IncomingEnvelope, plaintext: ByteArray): Applied {
@@ -178,18 +307,35 @@ class IncomingPipeline(
         val conversation = ConversationId.direct(UserId(me), UserId(e.sender))
         val stranger = dao.contact(e.sender)?.displayName == SignalStore.UNKNOWN_CONTACT
         val p = PayloadCodec.decode(plaintext)
-        // A held envelope that turned out not to be text leaves no bubble.
-        if (p !is Payload.Text) dao.deletePlaceholder(e.sender, e.id)
+        // A held envelope that turned out not to be shown content leaves no bubble.
+        val content = (p is Payload.Text && p.g == null) || (p is Payload.Media && p.g == null)
+        if (!content) dao.deletePlaceholder(e.sender, e.id)
+        val replaces = p?.replacesId()
+        if (!content) replaces?.let { resolve(e.sender, it, delete = true) }
         return when (p) {
-            is Payload.Text -> applyText(conversation, e, p, stranger)
+            // Group content only ever travels under a sender key, never pairwise.
+            is Payload.Text -> if (p.g != null) {
+                Applied()
+            } else {
+                applyContent(conversation, e, p.mid, p.ts, p.replaces, p.body, null, null, stranger)
+            }
+            is Payload.Media -> if (p.g != null) {
+                Applied()
+            } else {
+                applyContent(conversation, e, p.mid, p.ts, p.replaces, "", p.a, null, stranger)
+            }
+            is Payload.Reaction -> {
+                if (p.g == null && (p.author == me || p.author == e.sender)) {
+                    applyReaction(conversation.value, e.sender, p)
+                }
+                Applied()
+            }
             is Payload.Read -> {
                 dao.markReadByPeer(p.ids, e.sender)
-                p.replaces?.let { resolve(e.sender, it, delete = true) }
                 Applied()
             }
             is Payload.ContactRequest -> {
                 applyContactRequest(e.sender, p)
-                p.replaces?.let { resolve(e.sender, it, delete = true) }
                 Applied(lookupSender = true)
             }
             is Payload.SessionReset -> {
@@ -200,25 +346,53 @@ class IncomingPipeline(
                 applyResetDone(e.sender, p)
                 Applied()
             }
+            is Payload.GroupUpdate -> Applied(releaseGroup = groups.applyUpdate(me, e.sender, p.state))
+            is Payload.SenderKey ->
+                Applied(releaseGroup = if (groups.applySenderKey(e.sender, p)) listOf(e.sender) else emptyList())
+            is Payload.GroupJoin -> {
+                groups.applyJoin(me, e.sender, p.g)
+                Applied()
+            }
+            is Payload.GroupDecline -> {
+                groups.applyDecline(me, e.sender, p.g)
+                Applied()
+            }
+            is Payload.GroupLeave -> {
+                groups.applyLeave(me, e.sender, p.g)
+                Applied()
+            }
             Payload.Typing, null -> Applied() // misplaced or unknown: drop
         }
     }
 
-    private fun applyText(
+    /**
+     * A text or media message, 1:1 ([group] null) or in a group. In 1:1 chats
+     * a resend replaces its placeholder in place, keeping its position.
+     */
+    private fun applyContent(
         conversation: ConversationId,
         e: IncomingEnvelope,
-        p: Payload.Text,
-        stranger: Boolean,
+        midOrNull: String?,
+        ts: Long?,
+        replaces: String?,
+        body: String,
+        pointer: AttachmentPointer?,
+        group: String?,
+        stranger: Boolean = false,
     ): Applied {
-        val mid = p.mid ?: e.id
-        // A resend replaces its placeholder in place, keeping its position.
-        val placeholder = sequenceOf(p.replaces, mid, e.id).filterNotNull()
-            .firstNotNullOfOrNull { id -> dao.message(e.sender, id)?.takeIf { it.placeholder != null } }
-        val timestamp = if (placeholder != null) p.ts ?: placeholder.timestamp else e.serverTs
-        val shown = if (placeholder != null) {
-            dao.recoverPlaceholder(placeholder.localOrder, p.body, timestamp)
+        val mid = midOrNull ?: e.id
+        val attachment = pointer?.let { Attachments.fromPointer(it) ?: return Applied() } // malformed: drop
+        val placeholder = if (group != null) {
+            null
+        } else {
+            sequenceOf(replaces, mid, e.id).filterNotNull()
+                .firstNotNullOfOrNull { id -> dao.message(e.sender, id)?.takeIf { it.placeholder != null } }
+        }
+        val timestamp = if (placeholder != null) ts ?: placeholder.timestamp else e.serverTs
+        val row = if (placeholder != null) {
+            dao.recoverPlaceholder(placeholder.localOrder, body, timestamp)
             dao.resolveReset(e.sender, placeholder.messageId)
-            true
+            placeholder.localOrder
         } else {
             dao.insertMessage(
                 MessageEntity(
@@ -226,15 +400,38 @@ class IncomingPipeline(
                     conversationId = conversation.value,
                     peerId = e.sender,
                     outgoing = false,
-                    body = p.body,
+                    body = body,
                     timestamp = timestamp,
                     status = null,
                 ),
-            ) != -1L
+            )
         }
-        p.replaces?.let { dao.resolveReset(e.sender, it) }
+        replaces?.let { dao.resolveReset(e.sender, it) }
+        if (row != -1L && attachment != null) db.groupDao().putAttachment(attachment.copy(messageRow = row))
+        if (group == null) {
+            // A group member we only knew from a group now writes to us directly: a message request.
+            dao.contact(e.sender)?.takeIf { it.hidden }?.let {
+                dao.putContact(it.copy(hidden = false, isRequest = true))
+            }
+        }
         val name = dao.contact(e.sender)?.displayName ?: SignalStore.UNKNOWN_CONTACT
-        return Applied(notify = if (shown) Triple(conversation, name, p.body) else null, lookupSender = stranger)
+        val preview = if (attachment != null) Attachments.preview(attachment.kind) else body
+        val title = if (group != null) "$name · $group" else name
+        return Applied(notify = if (row != -1L) Triple(conversation, title, preview) else null, lookupSender = stranger)
+    }
+
+    /** One reaction per reactor per message; a newer one replaces an older one. */
+    private fun applyReaction(conversation: String, reactor: String, p: Payload.Reaction) {
+        val emoji = p.emoji
+        if (p.target.length > MAX_ID || p.author.length > MAX_ID || (emoji != null && emoji.length > MAX_EMOJI)) return
+        val gdao = db.groupDao()
+        val previous = gdao.reactionTime(conversation, p.author, p.target, reactor)
+        if (previous != null && previous > p.ts) return
+        if (emoji == null) {
+            gdao.deleteReaction(conversation, p.author, p.target, reactor)
+        } else {
+            gdao.putReaction(ReactionEntity(conversation, p.author, p.target, reactor, emoji, p.ts))
+        }
     }
 
     /**
@@ -348,38 +545,69 @@ class IncomingPipeline(
         const val KIND_ENVELOPE = "envelope"
         const val KIND_DELIVERED = "delivered"
         const val KIND_TEXT = "text"
+        const val KIND_MEDIA = "media"
         const val KIND_CONTROL = "control"
         const val STATE_QUEUED = "queued"
         private const val MAX_ATTEMPTS = 3
         private const val MAX_NAME = 64
+        private const val MAX_ID = 64
+        private const val MAX_EMOJI = 16
 
+        // processGroup outcomes besides a group ID.
+        private const val HOLD = "\u0000hold"
+        private const val DROP = "\u0000drop"
+
+        /**
+         * The sent-log kind. Only [KIND_CONTROL] payloads are never resent
+         * after a failed decryption; group control messages and sender keys
+         * are resent, or a lost key would strand every later group message.
+         */
         fun Payload.kind(): String = when (this) {
             is Payload.Text -> KIND_TEXT
+            is Payload.Media -> KIND_MEDIA
             is Payload.Read -> "read"
             is Payload.ContactRequest -> "contact_request"
-            else -> KIND_CONTROL
+            is Payload.Reaction -> "reaction"
+            is Payload.SenderKey -> "sender_key"
+            is Payload.GroupUpdate, is Payload.GroupJoin, is Payload.GroupDecline, is Payload.GroupLeave -> "group"
+            Payload.Typing, is Payload.SessionReset, is Payload.ResetDone -> KIND_CONTROL
         }
 
         /** The logical ID a sent payload is about (for the sent log). */
         fun Payload.originalId(transportId: String): String? = when (this) {
             is Payload.Text -> replaces ?: mid ?: transportId
-            is Payload.Read -> replaces
-            is Payload.ContactRequest -> replaces
-            else -> null
+            is Payload.Media -> replaces ?: mid ?: transportId
+            else -> replacesId()
         }
 
-        fun Payload.isResend(): Boolean = when (this) {
-            is Payload.Text -> replaces != null
-            is Payload.Read -> replaces != null
-            is Payload.ContactRequest -> replaces != null
-            else -> false
+        fun Payload.isResend(): Boolean = replacesId() != null
+
+        fun Payload.replacesId(): String? = when (this) {
+            is Payload.Text -> replaces
+            is Payload.Media -> replaces
+            is Payload.Reaction -> replaces
+            is Payload.Read -> replaces
+            is Payload.ContactRequest -> replaces
+            is Payload.GroupUpdate -> replaces
+            is Payload.SenderKey -> replaces
+            is Payload.GroupJoin -> replaces
+            is Payload.GroupDecline -> replaces
+            is Payload.GroupLeave -> replaces
+            Payload.Typing, is Payload.SessionReset, is Payload.ResetDone -> null
         }
 
         private fun Payload.resendOf(id: String): Payload = when (this) {
             is Payload.Text -> copy(replaces = id)
+            is Payload.Media -> copy(replaces = id)
+            is Payload.Reaction -> copy(replaces = id)
             is Payload.Read -> copy(replaces = id)
             is Payload.ContactRequest -> copy(replaces = id)
-            else -> this
+            is Payload.GroupUpdate -> copy(replaces = id)
+            is Payload.SenderKey -> copy(replaces = id)
+            is Payload.GroupJoin -> copy(replaces = id)
+            is Payload.GroupDecline -> copy(replaces = id)
+            is Payload.GroupLeave -> copy(replaces = id)
+            Payload.Typing, is Payload.SessionReset, is Payload.ResetDone -> this
         }
     }
 }

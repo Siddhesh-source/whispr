@@ -93,6 +93,72 @@ class FakeMessaging : dev.whispr.domain.repository.MessagingRepository {
         typingCalls++
     }
     override fun observePeerTyping(conversation: dev.whispr.domain.model.ConversationId) = typing
+
+    val groupSent = mutableListOf<Pair<dev.whispr.domain.model.GroupId, String>>()
+    val media = mutableListOf<dev.whispr.domain.model.MediaSource>()
+    val reactions = mutableListOf<Pair<String, String?>>()
+    var mediaResult: dev.whispr.domain.model.SendResult = dev.whispr.domain.model.SendResult.Ok
+    val downloads = mutableListOf<String>()
+    var bytes: ByteArray? = null
+
+    override suspend fun sendGroupText(group: dev.whispr.domain.model.GroupId, text: String): Boolean {
+        if (sendAllowed) groupSent += group to text
+        return sendAllowed
+    }
+    override suspend fun sendMedia(
+        conversation: dev.whispr.domain.model.ConversationId,
+        source: dev.whispr.domain.model.MediaSource,
+    ) = mediaResult.also { media += source }
+    override suspend fun react(
+        conversation: dev.whispr.domain.model.ConversationId,
+        messageId: String,
+        emoji: String?,
+    ) {
+        reactions += messageId to emoji
+    }
+    override suspend fun download(conversation: dev.whispr.domain.model.ConversationId, messageId: String) {
+        downloads += messageId
+    }
+    override suspend fun attachmentBytes(conversation: dev.whispr.domain.model.ConversationId, messageId: String) =
+        bytes
+    override suspend fun exportAttachment(
+        conversation: dev.whispr.domain.model.ConversationId,
+        messageId: String,
+    ): String? = null
+}
+
+class FakeGroups : dev.whispr.domain.repository.GroupsRepository {
+    val groups = MutableStateFlow<Map<dev.whispr.domain.model.GroupId, dev.whispr.domain.model.Group>>(emptyMap())
+    val calls = mutableListOf<String>()
+    var result: dev.whispr.domain.model.GroupResult = dev.whispr.domain.model.GroupResult.Ok(
+        dev.whispr.domain.model.GroupId("11111111-1111-4111-8111-111111111111"),
+    )
+
+    override fun observeGroup(id: dev.whispr.domain.model.GroupId) = groups.map { it[id] }
+    override suspend fun create(name: String, members: List<UserId>, avatar: AvatarSource?) =
+        result.also { calls += "create:$name:${members.size}" }
+    override suspend fun rename(id: dev.whispr.domain.model.GroupId, name: String) = result.also {
+        calls +=
+            "rename:$name"
+    }
+    override suspend fun setAvatar(id: dev.whispr.domain.model.GroupId, avatar: AvatarSource?) = result.also {
+        calls +=
+            "avatar"
+    }
+    override suspend fun addMembers(id: dev.whispr.domain.model.GroupId, members: List<UserId>) =
+        result.also { calls += "add:${members.size}" }
+    override suspend fun removeMember(id: dev.whispr.domain.model.GroupId, member: UserId) =
+        result.also { calls += "remove:${member.value}" }
+    override suspend fun setRole(
+        id: dev.whispr.domain.model.GroupId,
+        member: UserId,
+        role: dev.whispr.domain.model.GroupRole,
+    ) = result.also { calls += "role:${member.value}:$role" }
+    override suspend fun invite(id: dev.whispr.domain.model.GroupId, members: List<UserId>) =
+        result.also { calls += "invite:${members.size}" }
+    override suspend fun acceptInvite(id: dev.whispr.domain.model.GroupId) = result.also { calls += "accept" }
+    override suspend fun declineInvite(id: dev.whispr.domain.model.GroupId) = result.also { calls += "decline" }
+    override suspend fun leave(id: dev.whispr.domain.model.GroupId) = result.also { calls += "leave" }
 }
 
 class FakeContacts : dev.whispr.domain.repository.ContactsRepository {
