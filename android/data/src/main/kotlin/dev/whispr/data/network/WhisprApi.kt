@@ -49,6 +49,11 @@ class WhisprApi(
 
     suspend fun deleteUsername(): ApiResult<Unit> = authedUnit { b -> b.url(base.resolve("v1/me/username")!!).delete() }
 
+    /** Short-lived STUN/TURN credentials for one call (503 when the server runs no relay). */
+    suspend fun turnCredentials(): ApiResult<TurnResponse> = authed { b ->
+        b.url(base.resolve("v1/calls/turn")!!).get()
+    }
+
     private suspend inline fun <reified T> authed(build: (Request.Builder) -> Request.Builder): ApiResult<T> {
         val token = tokens.bearerToken() ?: return ApiResult.NetworkError
         return client.executeJson(build(Request.Builder().header("Authorization", "Bearer $token")).build(), json)
@@ -100,3 +105,6 @@ data class NicknameRequest(val nickname: String)
 
 @Serializable
 data class UsernameResponse(val username: String)
+
+@Serializable
+data class TurnResponse(val urls: List<String>, val username: String, val credential: String, val ttl: Long)

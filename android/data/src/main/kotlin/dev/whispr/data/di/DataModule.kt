@@ -14,6 +14,8 @@ import dev.whispr.data.account.asImporter
 import dev.whispr.data.auth.DeviceWipe
 import dev.whispr.data.auth.SessionAuthRepository
 import dev.whispr.data.auth.TokenSource
+import dev.whispr.data.calls.RoomCallLogRepository
+import dev.whispr.data.calls.RoomCallSignalingRepository
 import dev.whispr.data.connectivity.AndroidConnectivityRepository
 import dev.whispr.data.contacts.RoomContactsRepository
 import dev.whispr.data.crypto.AndroidKeystoreKeyWrapper
@@ -41,8 +43,11 @@ import dev.whispr.data.network.ServerConfig
 import dev.whispr.data.network.TlsPolicy
 import dev.whispr.data.network.WhisprApi
 import dev.whispr.data.profile.RoomProfileRepository
+import dev.whispr.data.status.RoomStatusRepository
 import dev.whispr.domain.repository.AccountRepository
 import dev.whispr.domain.repository.AuthRepository
+import dev.whispr.domain.repository.CallLogRepository
+import dev.whispr.domain.repository.CallSignalingRepository
 import dev.whispr.domain.repository.ConnectivityRepository
 import dev.whispr.domain.repository.ContactsRepository
 import dev.whispr.domain.repository.EncryptionRepository
@@ -51,6 +56,7 @@ import dev.whispr.domain.repository.IdentityRepository
 import dev.whispr.domain.repository.MessagingRepository
 import dev.whispr.domain.repository.ProfileRepository
 import dev.whispr.domain.repository.SettingsRepository
+import dev.whispr.domain.repository.StatusRepository
 import java.io.File
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -270,6 +276,28 @@ object DataModule {
             AvatarStore(context.contentResolver, File(context.noBackupFilesDir, "avatar")).asImporter(),
             Dispatchers.IO,
         )
+
+    @Provides @Singleton
+    fun roomStatusRepository(
+        db: WhisprDatabase,
+        engine: MessagingEngine,
+        accounts: AccountRepository,
+        media: MediaService,
+    ) = RoomStatusRepository(db, engine, accounts, media, CoroutineScope(SupervisorJob() + Dispatchers.IO))
+
+    @Provides
+    fun statusRepository(impl: RoomStatusRepository): StatusRepository = impl
+
+    @Provides @Singleton
+    fun callSignaling(
+        db: WhisprDatabase,
+        engine: MessagingEngine,
+        api: WhisprApi,
+        accounts: AccountRepository,
+    ): CallSignalingRepository = RoomCallSignalingRepository(db, engine, api, accounts)
+
+    @Provides @Singleton
+    fun callLog(db: WhisprDatabase): CallLogRepository = RoomCallLogRepository(db)
 
     private fun secretsDir(context: Context) = File(context.noBackupFilesDir, "secrets")
 

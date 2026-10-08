@@ -69,6 +69,10 @@ class ColorContrastTest {
         add(Triple("onSealSoft/sealSoft", w.onSealSoft, w.sealSoft))
         add(Triple("onDangerSoft/dangerSoft (warning body)", w.onDangerSoft, w.dangerSoft))
         w.avatarPalette.forEachIndexed { i, (bg, fg) -> add(Triple("avatar[$i]", fg, bg)) }
+        w.statusBackgrounds.forEachIndexed { i, bg -> add(Triple("onStatus/status[$i]", w.onStatus, bg)) }
+        add(Triple("onCallGround/callGround", w.onCallGround, w.callGround))
+        add(Triple("onCallGround/callControl", w.onCallGround, w.callControl))
+        add(Triple("danger/callGround (missed)", w.danger, c.surface))
     }
 
     private fun contrast(a: Color, b: Color): Double {

@@ -64,6 +64,8 @@ android {
         versionCode = 1
         versionName = "0.1.0-beta.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        // libsignal and libwebrtc are native: ship phones (arm) and emulators (x86_64) only.
+        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
         buildConfigField("String", "FIREBASE_APP_ID", "\"${firebaseValue("app_id")}\"")
         buildConfigField("String", "FIREBASE_API_KEY", "\"${firebaseValue("api_key")}\"")
         buildConfigField("String", "FIREBASE_PROJECT_ID", "\"${firebaseValue("project_id")}\"")
@@ -172,6 +174,7 @@ dependencies {
     implementation(libs.androidx.lifecycle.process)
     // QR scanning: zxing-cpp (open source, on-device, no Google services) on a CameraX preview.
     implementation(libs.zxing.cpp)
+    implementation(libs.webrtc)
     implementation(libs.camera.camera2)
     implementation(libs.camera.lifecycle)
     implementation(libs.camera.compose)

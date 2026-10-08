@@ -1,13 +1,11 @@
 package dev.whispr.android.ui.chat
 
 import android.Manifest
-import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.content.pm.PackageManager
 import android.graphics.BitmapFactory
-import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -57,7 +55,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -112,7 +109,6 @@ import dev.whispr.domain.model.MessageRules
 import dev.whispr.domain.model.MessageStatus
 import dev.whispr.domain.model.Quote
 import dev.whispr.domain.model.TrustState
-import java.io.File
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -142,6 +138,8 @@ fun ChatRoute(
     onBack: () -> Unit,
     onVerify: () -> Unit,
     onGroupInfo: () -> Unit = {},
+    /** 1:1 chats: start a voice (false) or video (true) call. */
+    onCall: (video: Boolean) -> Unit = {},
     viewModel: ChatViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -175,6 +173,7 @@ fun ChatRoute(
         onDismissError = viewModel::dismissError,
         onError = viewModel::reportError,
         onGroupInfo = onGroupInfo,
+        onCall = onCall,
         onAcceptInvite = viewModel::acceptInvite,
         onDeclineInvite = { viewModel.declineInvite(onBack) },
         attachments = actions,
@@ -219,6 +218,7 @@ fun ChatScreen(
     onDismissError: () -> Unit = {},
     onError: (ChatError) -> Unit = {},
     onGroupInfo: () -> Unit = {},
+    onCall: (video: Boolean) -> Unit = {},
     onAcceptInvite: () -> Unit = {},
     onDeclineInvite: () -> Unit = {},
     attachments: AttachmentActions = AttachmentActions.None,
@@ -247,6 +247,15 @@ fun ChatScreen(
                 titleBadgeDescription = stringResource(R.string.chat_verified_badge),
                 actions = {
                     if (state.content !is ChatContent.Missing) {
+                        // Calls are 1:1 only (group calls need a media server).
+                        if (!state.isGroup && state.canCompose) {
+                            IconButton(onClick = { onCall(true) }) {
+                                Icon(WhisprIcons.Video, contentDescription = stringResource(R.string.call_video))
+                            }
+                            IconButton(onClick = { onCall(false) }) {
+                                Icon(WhisprIcons.Call, contentDescription = stringResource(R.string.call_voice))
+                            }
+                        }
                         if (state.canCompose) TimerMenu(state.timerSeconds, messageActions.onSetTimer)
                         if (state.isGroup) {
                             IconButton(onClick = onGroupInfo) {
@@ -440,31 +449,12 @@ private fun Composer(
     val pickGif = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         uri?.let { onSendMedia(it.toString(), AttachmentKind.Image, null, null) }
     }
-    // Survives the activity being recreated while the camera app is in front.
-    var capture by rememberSaveable { mutableStateOf<String?>(null) }
-    val takePicture = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { taken ->
-        val file = capture?.let(::File)
-        capture = null
-        when {
-            file == null -> Unit
-            taken && file.length() > 0 -> onSendMedia(Uri.fromFile(file).toString(), AttachmentKind.Image, null, null)
-            else -> file.delete()
-        }
-    }
-    val openCamera = {
-        val file = newCameraFile(context)
-        capture = file.absolutePath
-        try {
-            takePicture.launch(cameraUri(context, file))
-        } catch (_: ActivityNotFoundException) {
-            capture = null
-            file.delete()
-            onError(ChatError.NoCamera)
-        }
-    }
-    val askCamera = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) openCamera() else onError(ChatError.CameraDenied)
-    }
+    val takePhoto = rememberCameraCapture(
+        onPhoto = { uri -> onSendMedia(uri, AttachmentKind.Image, null, null) },
+        onProblem = {
+            onError(if (it == CameraProblem.Denied) ChatError.CameraDenied else ChatError.NoCamera)
+        },
+    )
     val haptics = LocalHapticFeedback.current
     var elapsed by remember { mutableLongStateOf(0L) }
     val levels = remember { mutableStateListOf<Float>() }
@@ -505,11 +495,7 @@ private fun Composer(
                     leadingIcon = { Icon(WhisprIcons.Camera, contentDescription = null) },
                     onClick = {
                         menu = false
-                        // The app declares CAMERA (QR scanning, video calls), so Android
-                        // requires it to be granted before the camera intent may launch.
-                        val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) ==
-                            PackageManager.PERMISSION_GRANTED
-                        if (granted) openCamera() else askCamera.launch(Manifest.permission.CAMERA)
+                        takePhoto()
                     },
                 )
                 DropdownMenuItem(

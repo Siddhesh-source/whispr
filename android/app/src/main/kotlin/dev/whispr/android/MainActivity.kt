@@ -1,5 +1,6 @@
 package dev.whispr.android
 
+import android.content.Intent
 import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
@@ -18,6 +19,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.AndroidEntryPoint
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dev.whispr.android.calls.CallOverlay
+import dev.whispr.android.calls.CallRequests
 import dev.whispr.android.navigation.WhisprNavHost
 import dev.whispr.core.designsystem.component.LoadingState
 import dev.whispr.core.designsystem.theme.WhisprTheme
@@ -34,9 +37,12 @@ import kotlinx.coroutines.flow.stateIn
 class MainActivity : ComponentActivity() {
     private val viewModel: MainViewModel by viewModels()
 
+    @Inject lateinit var callRequests: CallRequests
+
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+        if (savedInstanceState == null) handle(intent)
         // Secure until the setting says otherwise, so nothing leaks before it loads.
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         setContent {
@@ -57,11 +63,41 @@ class MainActivity : ComponentActivity() {
                     if (start == null) start = destination
                     when (val s = start) {
                         null -> LoadingState()
-                        else -> WhisprNavHost(s)
+                        else -> CallOverlay { startCall, openCallsTab, onCallsTabOpened ->
+                            WhisprNavHost(
+                                s,
+                                onCall = startCall,
+                                openCallsTab = openCallsTab,
+                                onCallsTabOpened = onCallsTabOpened,
+                            )
+                        }
                     }
                 }
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handle(intent)
+    }
+
+    /** Requests from call notifications. */
+    private fun handle(intent: Intent?) {
+        when (intent?.action) {
+            ACTION_SHOW_CALL -> callRequests.show.value = true
+            ACTION_ACCEPT_CALL -> {
+                callRequests.show.value = true
+                callRequests.accept.value = true
+            }
+            ACTION_SHOW_CALLS -> callRequests.openCallsTab.value = true
+        }
+    }
+
+    companion object {
+        const val ACTION_SHOW_CALL = "dev.whispr.android.SHOW_CALL"
+        const val ACTION_ACCEPT_CALL = "dev.whispr.android.ACCEPT_CALL"
+        const val ACTION_SHOW_CALLS = "dev.whispr.android.SHOW_CALLS"
     }
 }
 

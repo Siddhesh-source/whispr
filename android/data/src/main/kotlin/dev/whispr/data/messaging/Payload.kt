@@ -141,7 +141,49 @@ sealed interface Payload {
     @Serializable
     @SerialName("group_leave")
     data class GroupLeave(val g: String, val replaces: String? = null) : Payload
+
+    /**
+     * A status update (pairwise, to every accepted contact). [kind] is "text"
+     * (with [bg]) or "image" (with [a]; [text] is the caption). Shown for 24 h
+     * from [ts].
+     */
+    @Serializable
+    @SerialName("status")
+    data class Status(
+        val sid: String,
+        val ts: Long,
+        val kind: String,
+        val text: String = "",
+        val bg: Int = 0,
+        val a: AttachmentPointer? = null,
+    ) : Payload
+
+    /** The author deleted status [sid] early. */
+    @Serializable
+    @SerialName("status_delete")
+    data class StatusDelete(val sid: String, val ts: Long) : Payload
+
+    /** Call signaling (pairwise, queued ahead of other traffic). */
+    @Serializable
+    @SerialName("call_offer")
+    data class CallOffer(val cid: String, val sdp: String, val video: Boolean, val ts: Long) : Payload
+
+    @Serializable
+    @SerialName("call_answer")
+    data class CallAnswer(val cid: String, val sdp: String) : Payload
+
+    @Serializable
+    @SerialName("call_ice")
+    data class CallIce(val cid: String, val c: List<IceCandidatePayload>) : Payload
+
+    /** [reason]: hangup, decline, busy, timeout or error. */
+    @Serializable
+    @SerialName("call_hangup")
+    data class CallHangup(val cid: String, val reason: String) : Payload
 }
+
+@Serializable
+data class IceCandidatePayload(val mid: String? = null, val idx: Int, val sdp: String)
 
 /** Where an attachment is and how to open it. Only ever inside an encrypted payload. */
 @Serializable

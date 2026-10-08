@@ -320,9 +320,13 @@ interface CryptoDao {
     @Query(
         """SELECT * FROM outbox WHERE recipientId NOT IN
              (SELECT recipientId FROM parked_recipients WHERE retryAt > :now)
-           ORDER BY seq LIMIT 1""",
+           ORDER BY priority, seq LIMIT 1""",
     )
     fun outboxHead(now: Long): OutboxEntity?
+
+    /** Status entries that waited (parked lane, offline) past a status's life: never sent. */
+    @Query("DELETE FROM outbox WHERE priority = 2 AND clientTs < :cutoff")
+    fun dropStaleStatus(cutoff: Long): Int
 
     @Query(
         """SELECT MIN(retryAt) FROM parked_recipients

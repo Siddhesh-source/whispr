@@ -245,6 +245,8 @@ interface SettingsRepository {
     suspend fun setTypingIndicators(enabled: Boolean)
 
     suspend fun setScreenSecurity(enabled: Boolean)
+
+    suspend fun setRelayCalls(enabled: Boolean)
 }
 
 interface EncryptionRepository {

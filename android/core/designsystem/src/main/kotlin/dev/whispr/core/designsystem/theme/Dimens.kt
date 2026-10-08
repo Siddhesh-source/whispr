@@ -50,6 +50,13 @@ data class WhisprSizes(
     val bubbleMaxWidthFraction: Float = 0.78f,
     /** Largest side of an image preview inside a bubble. */
     val mediaPreviewMax: Dp = 240.dp,
+    /** Call screen: accept, decline and hang up. */
+    val callAction: Dp = 68.dp,
+    /** Call screen: mute, speaker, camera toggles. */
+    val callControl: Dp = 56.dp,
+    /** Our own camera preview during a video call. */
+    val callPreviewWidth: Dp = 112.dp,
+    val callPreviewHeight: Dp = 160.dp,
 )
 
 internal val LocalWhisprSpacing = staticCompositionLocalOf { WhisprSpacing() }

@@ -66,6 +66,14 @@ class FakeRelay : Dispatcher() {
     /** Stored attachment blobs, exactly as uploaded. */
     val blobs = ConcurrentHashMap<String, ByteArray>()
 
+    /** While true, uploads fail with 500 (a flaky server). */
+    @Volatile var failUploads = false
+
+    private val sendsBy = ConcurrentHashMap<String, Int>()
+
+    /** How many send/send_multi frames [user] has sent. */
+    fun sentFrom(user: String): Int = sendsBy[user] ?: 0
+
     /** Envelopes matching this are queued but not delivered until [release]. */
     @Volatile var defer: (Stored) -> Boolean = { false }
     private val deferred = mutableListOf<Stored>()
@@ -109,6 +117,7 @@ class FakeRelay : Dispatcher() {
                 val key = Base64.getEncoder().encodeToString(identities.getValue(id))
                 ok("""{"user_id":"$id","display_name":"$name","identity_key":"$key"}""")
             }
+            path == "/v1/attachments" && request.method == "POST" && failUploads -> code(500)
             path == "/v1/attachments" && request.method == "POST" -> {
                 val id = UUID.randomUUID().toString()
                 blobs[id] = body ?: ByteArray(0)
@@ -143,10 +152,12 @@ class FakeRelay : Dispatcher() {
             when (f.s("type")) {
                 "send" -> {
                     sent += f
+                    sendsBy.merge(user, 1, Int::plus)
                     webSocket.send(accept(f, listOf(f.s("recipient_id"))))
                 }
                 "send_multi" -> {
                     sent += f
+                    sendsBy.merge(user, 1, Int::plus)
                     webSocket.send(accept(f, f.getValue("recipient_ids").jsonArray.map { it.jsonPrimitive.content }))
                 }
                 "ack" -> ack(user, f.s("seq").toLong())
@@ -196,7 +207,8 @@ class FakeRelay : Dispatcher() {
             put("kind", kind)
             refId?.let { put("ref_id", it) }
             put("client_ts", "2026-01-01T00:00:00Z")
-            put("server_ts", "2026-01-01T00:00:01Z")
+            // The real server stamps its own clock; call freshness depends on it.
+            put("server_ts", java.time.Instant.now().toString())
             put("payload", payload)
         }.toString()
         val stored = Stored(seq, recipient, frame, id, sender)

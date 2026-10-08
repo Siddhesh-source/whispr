@@ -17,12 +17,23 @@ import dev.whispr.data.db.PendingResetEntity
 import dev.whispr.data.db.Placeholder
 import dev.whispr.data.db.ReactionEntity
 import dev.whispr.data.db.SeenEnvelopeEntity
+import dev.whispr.data.db.StatusEntity
 import dev.whispr.data.db.WhisprDatabase
 import dev.whispr.data.network.UserResponse
+import dev.whispr.domain.model.AttachmentKind
+import dev.whispr.domain.model.AttachmentState
+import dev.whispr.domain.model.CallRules
+import dev.whispr.domain.model.CallSignal
 import dev.whispr.domain.model.ConversationId
 import dev.whispr.domain.model.GroupStatus
+import dev.whispr.domain.model.HangupReason
+import dev.whispr.domain.model.IceCandidate
+import dev.whispr.domain.model.IncomingCallSignal
 import dev.whispr.domain.model.MessageRules
+import dev.whispr.domain.model.StatusRules
+import dev.whispr.domain.model.TrustState
 import dev.whispr.domain.model.UserId
+import java.time.Instant
 import java.util.Base64
 import java.util.UUID
 import kotlin.coroutines.cancellation.CancellationException
@@ -52,6 +63,9 @@ interface PipelineEvents {
 
     /** A decryption failure was queued for a session reset. */
     fun onDecryptFailure()
+
+    /** Call signaling from a contact, after it was committed as seen. */
+    fun onCall(signal: IncomingCallSignal) = Unit
 }
 
 /**
@@ -93,6 +107,7 @@ class IncomingPipeline(
                 MessageDeletion.deleteFiles(result.value.deleteFiles)
                 result.value.notify?.let { (conv, name, body) -> events.onText(conv, name, body) }
                 result.value.removed?.let(events::onRemoved)
+                result.value.call?.let(events::onCall)
                 result.value.releaseGroup.forEach { releaseGroupHeld(me, it) }
                 if (result.usedOneTimeKey) events.onOneTimeKeyUsed()
                 if (result.value.lookupSender) refreshStranger(e.sender)
@@ -317,6 +332,7 @@ class IncomingPipeline(
         val deleteFiles: List<String> = emptyList(),
         /** A message here was deleted for everyone. */
         val removed: ConversationId? = null,
+        val call: IncomingCallSignal? = null,
     )
 
     /** Runs inside the decrypt transaction on the crypto thread. */
@@ -389,6 +405,13 @@ class IncomingPipeline(
                 groups.applyLeave(me, e.sender, p.g)
                 Applied()
             }
+            is Payload.Status -> {
+                applyStatus(e.sender, p)
+                Applied()
+            }
+            is Payload.StatusDelete -> Applied(deleteFiles = applyStatusDelete(e.sender, p))
+            is Payload.CallOffer, is Payload.CallAnswer, is Payload.CallIce, is Payload.CallHangup ->
+                Applied(call = callSignal(e, p))
             Payload.Typing, null -> Applied() // misplaced or unknown: drop
         }
     }
@@ -531,6 +554,79 @@ class IncomingPipeline(
      * The request's key must match the identity the PreKey message carried
      * (now pinned via the store); a mismatch is flagged, never adopted.
      */
+    /** Statuses and calls come only from contacts we accepted and whose key we trust. */
+    private fun trustedContact(sender: String): Boolean {
+        val c = dao.contact(sender) ?: return false
+        return !c.isRequest && !c.hidden && c.trust != TrustState.KeyChanged.name && c.identityKey.isNotEmpty()
+    }
+
+    private fun applyStatus(sender: String, p: Payload.Status) {
+        if (!trustedContact(sender) || p.sid.isEmpty() || p.sid.length > MAX_ID) return
+        val now = clock()
+        if (!StatusRules.isLive(Instant.ofEpochMilli(p.ts), Instant.ofEpochMilli(now))) return
+        // A sender's clock running ahead must not make a status outlive 24 hours here.
+        val created = minOf(p.ts, now)
+        val base = StatusEntity(
+            authorId = sender,
+            statusId = p.sid,
+            kind = p.kind,
+            body = p.text.take(StatusRules.MAX_TEXT),
+            background = p.bg.coerceIn(0, StatusRules.BACKGROUNDS - 1),
+            createdAt = created,
+            expireAt = created + StatusRules.LIFETIME.toMillis(),
+        )
+        val row = when (p.kind) {
+            STATUS_TEXT -> base.takeIf { p.text.isNotBlank() && p.a == null }
+            STATUS_IMAGE -> p.a?.let(Attachments::fromPointer)
+                ?.takeIf { it.kind == AttachmentKind.Image.name }
+                ?.let { a ->
+                    base.copy(
+                        body = p.text.take(StatusRules.MAX_CAPTION),
+                        remoteId = a.remoteId,
+                        key = a.key,
+                        digest = a.digest,
+                        size = a.size,
+                        contentType = a.contentType,
+                        width = a.width,
+                        height = a.height,
+                        thumbnail = a.thumbnail,
+                        mediaState = AttachmentState.Remote.name,
+                    )
+                }
+            else -> null
+        } ?: return
+        db.statusDao().insert(row) // a duplicate (author, sid) is ignored
+    }
+
+    /** Only the author can delete their status. Returns the blob file to remove. */
+    private fun applyStatusDelete(sender: String, p: Payload.StatusDelete): List<String> {
+        val sdao = db.statusDao()
+        val existing = sdao.get(sender, p.sid) ?: return emptyList()
+        sdao.delete(sender, p.sid)
+        return listOfNotNull(existing.blobPath)
+    }
+
+    /** A call signal as the domain sees it, or null if it isn't from a trusted contact or is malformed. */
+    private fun callSignal(e: IncomingEnvelope, p: Payload): IncomingCallSignal? {
+        if (!trustedContact(e.sender)) return null
+        val signal = when (p) {
+            is Payload.CallOffer -> CallSignal.Offer(p.cid, p.sdp, p.video).takeIf { p.sdp.length <= CallRules.MAX_SDP }
+            is Payload.CallAnswer -> CallSignal.Answer(p.cid, p.sdp).takeIf { p.sdp.length <= CallRules.MAX_SDP }
+            is Payload.CallIce -> CallSignal.Ice(
+                p.cid,
+                p.c.take(CallRules.MAX_CANDIDATES).filter { it.sdp.length <= CallRules.MAX_CANDIDATE_LEN }
+                    .map { IceCandidate(it.mid?.take(MAX_ID), it.idx, it.sdp) },
+            )
+            is Payload.CallHangup -> CallSignal.Hangup(
+                p.cid,
+                HangupReason.entries.firstOrNull { it.name.equals(p.reason, ignoreCase = true) } ?: HangupReason.Hangup,
+            )
+            else -> null
+        } ?: return null
+        if (signal.callId.isEmpty() || signal.callId.length > MAX_ID) return null
+        return IncomingCallSignal(UserId(e.sender), signal, Instant.ofEpochMilli(e.serverTs))
+    }
+
     private fun applyContactRequest(sender: String, p: Payload.ContactRequest) {
         val key = runCatching { Base64.getDecoder().decode(p.key) }.getOrNull()
             ?.takeIf { runCatching { IdentityKey(it) }.isSuccess } ?: return
@@ -644,6 +740,8 @@ class IncomingPipeline(
         private const val MAX_ATTEMPTS = 3
         private const val MAX_NAME = 64
         private const val MAX_ID = 64
+        const val STATUS_TEXT = "text"
+        const val STATUS_IMAGE = "image"
         private const val MAX_EMOJI = 16
 
         /** A delete may arrive a little after the window (queued while offline, clock skew). */
@@ -668,7 +766,11 @@ class IncomingPipeline(
             is Payload.Timer -> "timer"
             is Payload.SenderKey -> "sender_key"
             is Payload.GroupUpdate, is Payload.GroupJoin, is Payload.GroupDecline, is Payload.GroupLeave -> "group"
-            Payload.Typing, is Payload.SessionReset, is Payload.ResetDone -> KIND_CONTROL
+            // Never resent after a session reset: a late offer would ring, a status is ephemeral.
+            Payload.Typing, is Payload.SessionReset, is Payload.ResetDone,
+            is Payload.Status, is Payload.StatusDelete,
+            is Payload.CallOffer, is Payload.CallAnswer, is Payload.CallIce, is Payload.CallHangup,
+            -> KIND_CONTROL
         }
 
         /** The logical ID a sent payload is about (for the sent log). */
@@ -693,7 +795,10 @@ class IncomingPipeline(
             is Payload.GroupJoin -> replaces
             is Payload.GroupDecline -> replaces
             is Payload.GroupLeave -> replaces
-            Payload.Typing, is Payload.SessionReset, is Payload.ResetDone -> null
+            Payload.Typing, is Payload.SessionReset, is Payload.ResetDone,
+            is Payload.Status, is Payload.StatusDelete,
+            is Payload.CallOffer, is Payload.CallAnswer, is Payload.CallIce, is Payload.CallHangup,
+            -> null
         }
 
         private fun Payload.resendOf(id: String): Payload = when (this) {
@@ -709,7 +814,10 @@ class IncomingPipeline(
             is Payload.GroupJoin -> copy(replaces = id)
             is Payload.GroupDecline -> copy(replaces = id)
             is Payload.GroupLeave -> copy(replaces = id)
-            Payload.Typing, is Payload.SessionReset, is Payload.ResetDone -> this
+            Payload.Typing, is Payload.SessionReset, is Payload.ResetDone,
+            is Payload.Status, is Payload.StatusDelete,
+            is Payload.CallOffer, is Payload.CallAnswer, is Payload.CallIce, is Payload.CallHangup,
+            -> this
         }
     }
 }

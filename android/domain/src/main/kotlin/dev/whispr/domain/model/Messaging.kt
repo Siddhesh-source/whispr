@@ -203,4 +203,6 @@ data class PrivacySettings(
     val readReceipts: Boolean = false,
     val typingIndicators: Boolean = false,
     val screenSecurity: Boolean = true,
+    /** Calls go only through the server's relay, hiding your IP address from the people you call. */
+    val relayCalls: Boolean = false,
 )

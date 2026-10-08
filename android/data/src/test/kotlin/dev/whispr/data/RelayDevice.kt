@@ -3,6 +3,7 @@ package dev.whispr.data
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import dev.whispr.data.auth.TokenSource
+import dev.whispr.data.calls.RoomCallSignalingRepository
 import dev.whispr.data.db.AccountEntity
 import dev.whispr.data.db.ContactEntity
 import dev.whispr.data.db.WhisprDatabase
@@ -19,6 +20,7 @@ import dev.whispr.data.messaging.RoomSettingsRepository
 import dev.whispr.data.network.MediaApi
 import dev.whispr.data.network.ServerConfig
 import dev.whispr.data.network.WhisprApi
+import dev.whispr.data.status.RoomStatusRepository
 import dev.whispr.domain.model.Account
 import dev.whispr.domain.model.AvatarSource
 import dev.whispr.domain.model.ConversationId
@@ -113,6 +115,8 @@ class RelayDevice(val name: String, private val relay: FakeRelay, url: String) {
     )
     val repo = RoomMessagingRepository(db, engine, accounts, RoomSettingsRepository(db.settingDao()), media)
     val groups = RoomGroupsRepository(db, engine, accounts, identityRepo, preparer)
+    val statuses = RoomStatusRepository(db, engine, accounts, media, scope)
+    val calls = RoomCallSignalingRepository(db, engine, WhisprApi(client, ServerConfig(url), tokens), accounts)
 
     init {
         relay.register(id, name, identity.publicKey.serialize())

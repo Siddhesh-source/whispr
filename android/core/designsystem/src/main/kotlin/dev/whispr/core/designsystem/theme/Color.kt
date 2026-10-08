@@ -131,6 +131,14 @@ data class WhisprColors(
     /** QR codes are always dark-on-light in both themes, for reliable scanning. */
     val qrForeground: Color = black,
     val qrBackground: Color = white,
+    /** Status backgrounds, by index (StatusRules.BACKGROUNDS); [onStatus] text on all of them. */
+    val statusBackgrounds: List<Color> =
+        listOf(statusMoss, statusTeal, statusUmber, statusPlum, statusSlate, statusRust),
+    val onStatus: Color = dev.whispr.core.designsystem.theme.onStatus,
+    /** The call screen: always dark, so video and faces read the same in both themes. */
+    val callGround: Color = dev.whispr.core.designsystem.theme.callGround,
+    val onCallGround: Color = dev.whispr.core.designsystem.theme.onCallGround,
+    val callControl: Color = dev.whispr.core.designsystem.theme.callControl,
 )
 
 internal val LightWhisprColors = WhisprColors(

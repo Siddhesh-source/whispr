@@ -136,7 +136,19 @@ data class OutboxEntity(
     /** Set for a group message: sent with send_multi to [recipients] (comma-separated, fixed at send time). */
     val groupId: String? = null,
     val recipients: String? = null,
-)
+    /**
+     * Lower goes first: [PRIORITY_CALL] (call signaling), [PRIORITY_NORMAL]
+     * (messages and controls), [PRIORITY_STATUS] (status fan-out). A status to
+     * every contact must never delay a call or a chat message.
+     */
+    @ColumnInfo(defaultValue = "1") val priority: Int = PRIORITY_NORMAL,
+) {
+    companion object {
+        const val PRIORITY_CALL = 0
+        const val PRIORITY_NORMAL = 1
+        const val PRIORITY_STATUS = 2
+    }
+}
 
 @Entity(tableName = "settings")
 data class SettingEntity(@PrimaryKey val key: String, val value: String)

@@ -84,6 +84,7 @@ fun SettingsRoute(
         onEditProfile = onEditProfile,
         onMyCode = onMyCode,
         onScreenSecurity = viewModel::setScreenSecurity,
+        onRelayCalls = viewModel::setRelayCalls,
         deletion = deletion,
         onDeleteAccount = viewModel::deleteAccount,
         onDismissDeletion = viewModel::dismissDeletionError,
@@ -106,6 +107,7 @@ fun SettingsScreen(
     onEditProfile: () -> Unit = {},
     onMyCode: () -> Unit = {},
     onScreenSecurity: (Boolean) -> Unit = {},
+    onRelayCalls: (Boolean) -> Unit = {},
     deletion: Deletion = Deletion.Idle,
     onDeleteAccount: () -> Unit = {},
     onDismissDeletion: () -> Unit = {},
@@ -134,6 +136,7 @@ fun SettingsScreen(
                     onEditProfile,
                     onMyCode,
                     onScreenSecurity,
+                    onRelayCalls,
                     onDelete = { confirming = true },
                 )
             }
@@ -212,6 +215,7 @@ private fun SettingsContent(
     onEditProfile: () -> Unit,
     onMyCode: () -> Unit,
     onScreenSecurity: (Boolean) -> Unit,
+    onRelayCalls: (Boolean) -> Unit,
     onDelete: () -> Unit,
 ) {
     val clipboard = LocalClipboard.current
@@ -280,6 +284,13 @@ private fun SettingsContent(
                         stringResource(R.string.settings_screen_security_body),
                         state.screenSecurity,
                         onScreenSecurity,
+                    )
+                    GroupDivider()
+                    ToggleRow(
+                        stringResource(R.string.settings_relay_calls),
+                        stringResource(R.string.settings_relay_calls_summary),
+                        state.relayCalls,
+                        onRelayCalls,
                     )
                     GroupDivider()
                     ToggleRow(

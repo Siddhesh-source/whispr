@@ -20,7 +20,9 @@ import dev.whispr.data.network.WhisprApi
 import dev.whispr.domain.model.ConnectionState
 import dev.whispr.domain.model.ConversationId
 import dev.whispr.domain.model.GroupStatus
+import dev.whispr.domain.model.IncomingCallSignal
 import dev.whispr.domain.model.MessageStatus
+import dev.whispr.domain.model.StatusRules
 import dev.whispr.domain.model.UserId
 import dev.whispr.domain.repository.AccountRepository
 import dev.whispr.domain.repository.ConnectivityRepository
@@ -133,8 +135,13 @@ class MessagingEngine(
     private val typingUntil = MutableStateFlow<Map<String, Long>>(emptyMap())
     val typing: StateFlow<Map<String, Long>> = typingUntil.asStateFlow()
 
+    /** Call signaling from contacts, for the call manager. */
+    private val callFlow = MutableSharedFlow<IncomingCallSignal>(extraBufferCapacity = 64)
+    val calls: SharedFlow<IncomingCallSignal> = callFlow.asSharedFlow()
+
     private val foreground = MutableStateFlow(false)
     private val wakeActive = MutableStateFlow(false)
+    private val callActive = MutableStateFlow(false)
     private var wakeJob: Job? = null
 
     /** Nudges the outbox pump (new entry, lane unparked) and the reset worker. */
@@ -172,6 +179,10 @@ class MessagingEngine(
             override fun onDecryptFailure() {
                 resetSignal.trySend(Unit)
             }
+
+            override fun onCall(signal: IncomingCallSignal) {
+                callFlow.tryEmit(signal)
+            }
         },
         groups = groups,
         clock = clock,
@@ -179,6 +190,11 @@ class MessagingEngine(
 
     fun setForeground(value: Boolean) {
         foreground.value = value
+    }
+
+    /** Stay connected for the whole call, in the background too. */
+    fun setCallActive(value: Boolean) {
+        callActive.value = value
     }
 
     /** A push arrived: connect and stay connected for a short window. */
@@ -239,10 +255,9 @@ class MessagingEngine(
             val wanted = combine(
                 accounts.observeAccount().map { it?.isRegistered == true },
                 connectivity.isOnline,
-                foreground,
-                wakeActive,
+                combine(foreground, wakeActive, callActive) { fg, wake, call -> fg || wake || call },
                 db.outboxDao().observeCount().map { it > 0 },
-            ) { registered, online, fg, wake, pending -> registered && online && (fg || wake || pending) }
+            ) { registered, online, active, pending -> registered && online && (active || pending) }
             wanted.distinctUntilChanged().collectLatest { want ->
                 if (!want) {
                     state.value = ConnectionState.Offline
@@ -281,10 +296,15 @@ class MessagingEngine(
         val conversations = mutableSetOf<String>()
         val files = try {
             crypto.transaction {
-                dao.expired(clock()).flatMap { m ->
+                val now = clock()
+                val messages = dao.expired(now).flatMap { m ->
                     conversations += m.conversationId
                     MessageDeletion.remove(dao, m, if (m.outgoing) me else m.peerId)
                 }
+                // Statuses end after 24 hours, with their encrypted photo.
+                val statuses = db.statusDao().expired(now).mapNotNull { it.blobPath }
+                db.statusDao().deleteExpired(now)
+                messages + statuses
             }
         } catch (c: CancellationException) {
             throw c
@@ -381,7 +401,10 @@ class MessagingEngine(
     private suspend fun pumpOutbox(session: LiveSession, me: String) {
         while (true) {
             val now = clock()
-            val head = crypto.transaction { dao.outboxHead(now) }
+            val head = crypto.transaction {
+                dao.dropStaleStatus(now - StatusRules.LIFETIME.toMillis())
+                dao.outboxHead(now)
+            }
             if (head == null) {
                 val next = crypto.transaction { dao.nextUnpark(now) }
                 withTimeoutOrNull(

@@ -247,33 +247,68 @@ class MediaService(
         if (a.state == AttachmentState.Ready.name || a.state == AttachmentState.Downloading.name) return
         val remoteId = a.remoteId ?: return
         queries.setAttachmentState(row, AttachmentState.Downloading.name)
-        val state = when (val r = api.download(remoteId, a.size + MediaCrypto.OVERHEAD)) {
-            is DownloadResult.Ok -> {
-                // Verify before keeping anything: a blob that doesn't match the
-                // digest from the encrypted message is never stored or opened.
-                val ok = withContext(Dispatchers.Default) {
-                    r.blob.size.toLong() == a.size + MediaCrypto.OVERHEAD &&
-                        MediaCrypto.open(r.blob, a.key, a.digest) != null
-                }
-                if (ok) {
-                    val path = withContext(Dispatchers.IO) { files.write(r.blob) }
-                    queries.setAttachmentBlob(row, AttachmentState.Ready.name, path)
-                    return
-                }
-                AttachmentState.Corrupt
-            }
-            DownloadResult.Gone -> AttachmentState.Expired
-            DownloadResult.TooLarge -> AttachmentState.Corrupt
-            DownloadResult.NetworkError -> AttachmentState.Failed
+        val (state, path) = fetchVerified(remoteId, a.size, a.key, a.digest)
+        if (path != null) {
+            queries.setAttachmentBlob(row, state.name, path)
+        } else {
+            queries.setAttachmentState(row, state.name)
         }
-        queries.setAttachmentState(row, state.name)
     }
 
     /** Decrypted bytes of a stored attachment (in memory only). */
     suspend fun bytes(row: Long): ByteArray? {
         val a = queries.attachment(row) ?: return null
-        val blob = a.blobPath?.let { withContext(Dispatchers.IO) { files.read(it) } } ?: return null
-        return withContext(Dispatchers.Default) { MediaCrypto.open(blob, a.key, a.digest) }
+        return open(a.blobPath, a.key, a.digest)
+    }
+
+    // ---- Blobs that belong to no message (status photos) ----
+
+    /** A prepared image or file, encrypted under a fresh key and written to disk (not yet uploaded). */
+    class Detached(val path: String, val key: ByteArray, val digest: ByteArray, val size: Long)
+
+    suspend fun prepare(source: MediaSource): Prepared = preparer.prepare(source)
+
+    suspend fun sealDetached(plaintext: ByteArray): Detached {
+        val sealed = withContext(Dispatchers.Default) { MediaCrypto.seal(plaintext) }
+        val path = withContext(Dispatchers.IO) { files.write(sealed.blob) }
+        return Detached(path, sealed.key, sealed.digest, plaintext.size.toLong())
+    }
+
+    /** Uploads the encrypted blob at [path]; the server's blob ID, or null on failure. */
+    suspend fun uploadBlob(path: String): String? {
+        val blob = withContext(Dispatchers.IO) { files.read(path) } ?: return null
+        return (api.upload(blob) as? ApiResult.Success)?.body
+    }
+
+    /**
+     * Downloads blob [remoteId] and keeps it only if its size and digest match
+     * what the encrypted message announced: (Ready, path) or (why not, null).
+     */
+    suspend fun fetchVerified(
+        remoteId: String,
+        size: Long,
+        key: ByteArray,
+        digest: ByteArray,
+    ): Pair<AttachmentState, String?> = when (val r = api.download(remoteId, size + MediaCrypto.OVERHEAD)) {
+        is DownloadResult.Ok -> {
+            val ok = withContext(Dispatchers.Default) {
+                r.blob.size.toLong() == size + MediaCrypto.OVERHEAD && MediaCrypto.open(r.blob, key, digest) != null
+            }
+            if (ok) {
+                AttachmentState.Ready to withContext(Dispatchers.IO) { files.write(r.blob) }
+            } else {
+                AttachmentState.Corrupt to null
+            }
+        }
+        DownloadResult.Gone -> AttachmentState.Expired to null
+        DownloadResult.TooLarge -> AttachmentState.Corrupt to null
+        DownloadResult.NetworkError -> AttachmentState.Failed to null
+    }
+
+    /** Decrypts a stored blob in memory; null if missing or tampered with. */
+    suspend fun open(path: String?, key: ByteArray, digest: ByteArray): ByteArray? {
+        val blob = path?.let { withContext(Dispatchers.IO) { files.read(it) } } ?: return null
+        return withContext(Dispatchers.Default) { MediaCrypto.open(blob, key, digest) }
     }
 
     suspend fun export(row: Long): String? {

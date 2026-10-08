@@ -59,5 +59,20 @@ internal val darkAvatarA = Color(0xFF203427)
 internal val darkAvatarB = Color(0xFF2A3124)
 internal val darkAvatarC = Color(0xFF1F3130)
 
+// ---- Status backgrounds (both themes; light text on all six) ----
+// Deep, quiet tones from the same family as moss and seal, never neon.
+internal val statusMoss = Color(0xFF2C6E49)
+internal val statusTeal = Color(0xFF1F5F5B)
+internal val statusUmber = Color(0xFF7A5216)
+internal val statusPlum = Color(0xFF5B3A63)
+internal val statusSlate = Color(0xFF34495E)
+internal val statusRust = Color(0xFF8E3B27)
+internal val onStatus = Color(0xFFF4F7F2)
+
+// ---- Calls (both themes) ----
+internal val callGround = Color(0xFF0F1410)
+internal val onCallGround = Color(0xFFE5ECE6)
+internal val callControl = Color(0xFF26302A)
+
 internal val black = Color(0xFF000000)
 internal val white = Color(0xFFFFFFFF)

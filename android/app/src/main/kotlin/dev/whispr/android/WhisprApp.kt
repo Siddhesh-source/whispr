@@ -6,12 +6,14 @@ import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
 import dagger.Lazy
 import dagger.hilt.android.HiltAndroidApp
+import dev.whispr.android.calls.CallSystem
 import dev.whispr.android.di.ApplicationScope
 import dev.whispr.android.notifications.MessageNotifier
 import dev.whispr.android.push.PushManager
 import dev.whispr.android.session.SessionKeeper
 import dev.whispr.data.media.MediaService
 import dev.whispr.data.messaging.MessagingEngine
+import dev.whispr.data.status.RoomStatusRepository
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -25,6 +27,10 @@ class WhisprApp : Application() {
     @Inject lateinit var engine: Lazy<MessagingEngine>
 
     @Inject lateinit var media: Lazy<MediaService>
+
+    @Inject lateinit var statuses: Lazy<RoomStatusRepository>
+
+    @Inject lateinit var calls: Lazy<CallSystem>
 
     @Inject lateinit var notifier: Lazy<MessageNotifier>
 
@@ -40,9 +46,12 @@ class WhisprApp : Application() {
             engine.get().start()
             // Uploads cut off by the process dying; also clears decrypted exports.
             media.get().resumePending()
+            statuses.get().resumePending()
         }
         scope.launch { notifier.get().run() }
         scope.launch { push.get().start() }
+        // Listen for calls from the start, so an offer that arrives with a push wake-up rings.
+        calls.get().start(scope)
 
         // Keep the WebSocket open while the app is visible; in the background
         // the engine disconnects once the outbox is empty and relies on push.

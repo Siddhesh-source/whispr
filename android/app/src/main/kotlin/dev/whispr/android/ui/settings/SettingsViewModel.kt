@@ -40,6 +40,7 @@ sealed interface SettingsUiState {
         val typingIndicators: Boolean = false,
         val keysRegistered: Boolean = true,
         val screenSecurity: Boolean = true,
+        val relayCalls: Boolean = false,
     ) : SettingsUiState
 }
 
@@ -75,6 +76,7 @@ class SettingsViewModel @Inject constructor(
             typingIndicators = privacy.typingIndicators,
             keysRegistered = keysRegistered,
             screenSecurity = privacy.screenSecurity,
+            relayCalls = privacy.relayCalls,
         )
     }
         .catch { emit(SettingsUiState.Error) }
@@ -90,6 +92,10 @@ class SettingsViewModel @Inject constructor(
 
     fun setScreenSecurity(enabled: Boolean) {
         viewModelScope.launch { settings.setScreenSecurity(enabled) }
+    }
+
+    fun setRelayCalls(enabled: Boolean) {
+        viewModelScope.launch { settings.setRelayCalls(enabled) }
     }
 
     private val deletionState = MutableStateFlow(Deletion.Idle)

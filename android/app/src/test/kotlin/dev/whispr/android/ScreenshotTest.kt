@@ -8,6 +8,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.github.takahirom.roborazzi.captureRoboImage
+import dev.whispr.android.calls.CallPhase
+import dev.whispr.android.calls.CallScreen
+import dev.whispr.android.calls.CallUi
+import dev.whispr.android.ui.calls.CallsScreen
+import dev.whispr.android.ui.calls.CallsUiState
 import dev.whispr.android.ui.chat.ChatContent
 import dev.whispr.android.ui.chat.ChatScreen
 import dev.whispr.android.ui.chat.ChatUiState
@@ -21,6 +26,8 @@ import dev.whispr.android.ui.groups.GroupInfoScreen
 import dev.whispr.android.ui.groups.GroupInfoUiState
 import dev.whispr.android.ui.groups.NewGroupScreen
 import dev.whispr.android.ui.groups.NewGroupUiState
+import dev.whispr.android.ui.home.HomeBadges
+import dev.whispr.android.ui.home.HomeScreen
 import dev.whispr.android.ui.onboarding.OnboardingScreen
 import dev.whispr.android.ui.onboarding.OnboardingUiState
 import dev.whispr.android.ui.profile.EditProfileScreen
@@ -32,11 +39,16 @@ import dev.whispr.android.ui.search.SearchUiState
 import dev.whispr.android.ui.settings.ConnectionStatus
 import dev.whispr.android.ui.settings.SettingsScreen
 import dev.whispr.android.ui.settings.SettingsUiState
+import dev.whispr.android.ui.status.StatusScreen
+import dev.whispr.android.ui.status.StatusUiState
+import dev.whispr.android.ui.status.StatusViewer
 import dev.whispr.android.ui.verify.VerifyContent
 import dev.whispr.android.ui.verify.VerifyScreen
 import dev.whispr.android.ui.verify.VerifyUiState
 import dev.whispr.core.designsystem.component.RecordingBar
 import dev.whispr.core.designsystem.theme.WhisprTheme
+import dev.whispr.domain.model.CallLogEntry
+import dev.whispr.domain.model.CallOutcome
 import dev.whispr.domain.model.Contact
 import dev.whispr.domain.model.ConversationId
 import dev.whispr.domain.model.ConversationSummary
@@ -52,6 +64,10 @@ import dev.whispr.domain.model.Quote
 import dev.whispr.domain.model.Reaction
 import dev.whispr.domain.model.SafetyNumber
 import dev.whispr.domain.model.SearchHit
+import dev.whispr.domain.model.StatusAuthor
+import dev.whispr.domain.model.StatusFeed
+import dev.whispr.domain.model.StatusItem
+import dev.whispr.domain.model.StatusKind
 import dev.whispr.domain.model.TrustState
 import dev.whispr.domain.model.UserId
 import java.time.Duration
@@ -90,6 +106,41 @@ class ScreenshotTest {
             )
         }
     }
+
+    @Test fun homeLight() = capture("home_light") {
+        HomeScreen(HomeBadges(unread = 3, unseenStatus = true), chats = { chats() }, status = {}, calls = {})
+    }
+
+    @Test fun homeDark() = capture("home_dark", dark = true) {
+        HomeScreen(HomeBadges(unread = 3, unseenStatus = true), chats = { chats() }, status = {}, calls = {})
+    }
+
+    @Test fun statusLight() = capture("status_light") { statusTab() }
+
+    @Test fun statusDark() = capture("status_dark", dark = true) { statusTab() }
+
+    @Test fun statusViewerLight() = capture("status_viewer") {
+        StatusViewer(
+            name = "Maya Chen",
+            items = listOf(
+                statusItem("1", "Maya", "Summit at dawn. Worth the 4am start.", 0),
+                statusItem("2", "Maya", "x", 2),
+            ),
+            index = 0,
+            onIndex = {},
+            onClose = {},
+            onSeen = {},
+            loadImage = { null },
+        )
+    }
+
+    @Test fun callsLight() = capture("calls_light") { callsTab() }
+
+    @Test fun callsDark() = capture("calls_dark", dark = true) { callsTab() }
+
+    @Test fun callRinging() = capture("call_ringing") { callScreen(CallPhase.Ringing) }
+
+    @Test fun callConnected() = capture("call_connected") { callScreen(CallPhase.Connected) }
 
     @Test fun settingsLight() = capture("settings_light") { settings() }
 
@@ -322,6 +373,105 @@ class ScreenshotTest {
         onStartScan = {},
         onScanned = {},
         onSetVerified = {},
+    )
+
+    private fun statusItem(
+        id: String,
+        author: String,
+        text: String,
+        bg: Int,
+        viewed: Boolean = false,
+        hoursAgo: Long = 2,
+    ) = StatusItem(
+        id = id,
+        author = UserId(author),
+        mine = author == "me",
+        kind = StatusKind.Text,
+        text = text,
+        background = bg,
+        image = null,
+        createdAt = Instant.now().minus(Duration.ofHours(hoursAgo)),
+        expiresAt = Instant.now().plus(Duration.ofHours(20)),
+        viewed = viewed,
+    )
+
+    @Composable
+    private fun statusTab() = StatusScreen(
+        StatusUiState(
+            loading = false,
+            myName = "Ada Lovelace",
+            myId = UserId("me"),
+            feed = StatusFeed(
+                mine = listOf(statusItem("m", "me", "Back Monday", 3, viewed = true, hoursAgo = 1)),
+                recent = listOf(
+                    StatusAuthor(UserId("maya"), "Maya Chen", listOf(statusItem("1", "maya", "a", 0, hoursAgo = 1))),
+                    StatusAuthor(
+                        UserId("lukas"),
+                        "Lukas Petrov",
+                        listOf(statusItem("2", "lukas", "b", 1, hoursAgo = 3)),
+                    ),
+                ),
+                viewed = listOf(
+                    StatusAuthor(
+                        UserId("sam"),
+                        "Sam Okafor",
+                        listOf(statusItem("3", "sam", "c", 2, viewed = true, hoursAgo = 9)),
+                    ),
+                ),
+            ),
+        ),
+        onCompose = {},
+        onOpen = {},
+    )
+
+    @Composable
+    private fun callsTab() {
+        fun e(id: String, name: String, outcome: CallOutcome, video: Boolean, outgoing: Boolean, minutesAgo: Long) =
+            CallLogEntry(
+                id,
+                UserId(name),
+                name,
+                outgoing,
+                video,
+                Instant.now().minus(Duration.ofMinutes(minutesAgo)),
+                if (outcome == CallOutcome.Completed) Duration.ofSeconds(754) else null,
+                outcome,
+            )
+        CallsScreen(
+            CallsUiState(
+                loading = false,
+                calls = listOf(
+                    e("1", "Maya Chen", CallOutcome.Completed, video = true, outgoing = true, minutesAgo = 12),
+                    e("2", "Lukas Petrov", CallOutcome.Missed, video = false, outgoing = false, minutesAgo = 95),
+                    e("3", "Sam Okafor", CallOutcome.Completed, video = false, outgoing = false, minutesAgo = 300),
+                    e("4", "Maya Chen", CallOutcome.NoAnswer, video = false, outgoing = true, minutesAgo = 2000),
+                ),
+            ),
+            onCall = { _, _ -> },
+        )
+    }
+
+    @Composable
+    private fun callScreen(phase: CallPhase) = CallScreen(
+        call = CallUi(
+            callId = "c",
+            peer = UserId("maya"),
+            peerName = "Maya Chen",
+            video = false,
+            outgoing = false,
+            phase = phase,
+            startedAt = Instant.now(),
+            connectedAt = if (phase == CallPhase.Connected) Instant.now().minusSeconds(83) else null,
+        ),
+        video = null,
+        onAccept = {},
+        onDecline = {},
+        onHangUp = {},
+        onMute = {},
+        onSpeaker = {},
+        onCamera = {},
+        onSwitchCamera = {},
+        onMinimize = {},
     )
 
     private fun capture(name: String, dark: Boolean = false, content: @Composable () -> Unit) {
