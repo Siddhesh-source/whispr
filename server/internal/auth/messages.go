@@ -9,6 +9,7 @@ import "github.com/google/uuid"
 const (
 	registerLabel = "whispr-register-v1\x00"
 	authLabel     = "whispr-auth-v1\x00"
+	deleteLabel   = "whispr-delete-v1\x00"
 )
 
 // NonceLen is the size of an auth challenge nonce in bytes.
@@ -32,6 +33,19 @@ func RegisterMessage(identityKey []byte, displayName string) []byte {
 func AuthMessage(userID uuid.UUID, nonce []byte) []byte {
 	m := make([]byte, 0, len(authLabel)+16+len(nonce))
 	m = append(m, authLabel...)
+	m = append(m, userID[:]...)
+	return append(m, nonce...)
+}
+
+// DeleteMessage is what the client signs to delete its account, answering a
+// fresh challenge:
+//
+//	"whispr-delete-v1" 0x00 || user_id (16 raw bytes) || nonce (32 bytes)
+//
+// Its own label means a sign-in signature can never delete an account.
+func DeleteMessage(userID uuid.UUID, nonce []byte) []byte {
+	m := make([]byte, 0, len(deleteLabel)+16+len(nonce))
+	m = append(m, deleteLabel...)
 	m = append(m, userID[:]...)
 	return append(m, nonce...)
 }

@@ -17,10 +17,10 @@ import (
 func newTestServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	svc, _ := newTestService(t)
-	h := NewHandler(svc, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	h := NewHandler(svc, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 	r := chi.NewRouter()
 	r.Route("/v1", func(r chi.Router) {
-		h.PublicRoutes(r)
+		h.PublicRoutes(r, nil)
 		r.Group(func(r chi.Router) {
 			r.Use(RequireAuth(svc))
 			h.AuthedRoutes(r)

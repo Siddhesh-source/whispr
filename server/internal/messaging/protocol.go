@@ -46,6 +46,7 @@ const (
 	codeInvalid          = "invalid"
 	codeUnknownRecipient = "unknown_recipient"
 	codeSelf             = "self"
+	codeRecipientFull    = "recipient_full"
 	codeRateLimited      = "rate_limited"
 	codeInternal         = "internal"
 )

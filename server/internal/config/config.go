@@ -4,9 +4,12 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/netip"
 	"os"
 	"strconv"
 	"time"
+
+	"whispr/server/internal/platform/httpx"
 )
 
 type Config struct {
@@ -16,7 +19,15 @@ type Config struct {
 	ChallengeTTL time.Duration
 	// RateLimitPerMinute applies per client IP to unauthenticated auth endpoints.
 	RateLimitPerMinute int
-	LogLevel           string
+	// RegistrationsPerHour is a stricter per-IP limit on account creation.
+	RegistrationsPerHour int
+	// UserRequestsPerMinute bounds each user's authenticated REST calls.
+	UserRequestsPerMinute int
+	// TrustedProxies (TRUSTED_PROXIES, comma-separated CIDRs or addresses)
+	// may set X-Forwarded-For. Set it to the TLS terminator's address, or
+	// every client shares the proxy's rate limits.
+	TrustedProxies []netip.Prefix
+	LogLevel       string
 	// FCMCredentialsFile is a Firebase service-account JSON key. Empty disables push.
 	FCMCredentialsFile string
 	// S3 (S3-compatible, MinIO in development) holds encrypted attachments.
@@ -31,19 +42,21 @@ type Config struct {
 // everything else has a safe default.
 func Load() (Config, error) {
 	c := Config{
-		ListenAddr:          getenv("LISTEN_ADDR", ":8080"),
-		DatabaseURL:         os.Getenv("DATABASE_URL"),
-		LogLevel:            getenv("LOG_LEVEL", "info"),
-		FCMCredentialsFile:  os.Getenv("FCM_CREDENTIALS_FILE"),
-		TokenTTL:            15 * time.Minute,
-		ChallengeTTL:        60 * time.Second,
-		RateLimitPerMinute:  30,
-		S3Endpoint:          os.Getenv("S3_ENDPOINT"),
-		S3AccessKey:         os.Getenv("S3_ACCESS_KEY"),
-		S3SecretKey:         os.Getenv("S3_SECRET_KEY"),
-		S3Bucket:            getenv("S3_BUCKET", "whispr-media"),
-		S3UseSSL:            os.Getenv("S3_USE_SSL") != "false",
-		AttachmentRetention: 30 * 24 * time.Hour,
+		ListenAddr:            getenv("LISTEN_ADDR", ":8080"),
+		DatabaseURL:           os.Getenv("DATABASE_URL"),
+		LogLevel:              getenv("LOG_LEVEL", "info"),
+		FCMCredentialsFile:    os.Getenv("FCM_CREDENTIALS_FILE"),
+		TokenTTL:              15 * time.Minute,
+		ChallengeTTL:          60 * time.Second,
+		RateLimitPerMinute:    30,
+		RegistrationsPerHour:  10,
+		UserRequestsPerMinute: 120,
+		S3Endpoint:            os.Getenv("S3_ENDPOINT"),
+		S3AccessKey:           os.Getenv("S3_ACCESS_KEY"),
+		S3SecretKey:           os.Getenv("S3_SECRET_KEY"),
+		S3Bucket:              getenv("S3_BUCKET", "whispr-media"),
+		S3UseSSL:              os.Getenv("S3_USE_SSL") != "false",
+		AttachmentRetention:   30 * 24 * time.Hour,
 	}
 	if c.DatabaseURL == "" {
 		return Config{}, errors.New("DATABASE_URL is required")
@@ -61,12 +74,21 @@ func Load() (Config, error) {
 	if c.ChallengeTTL, err = duration("CHALLENGE_TTL", c.ChallengeTTL); err != nil {
 		return Config{}, err
 	}
-	if v := os.Getenv("RATE_LIMIT_PER_MINUTE"); v != "" {
-		n, err := strconv.Atoi(v)
-		if err != nil || n <= 0 {
-			return Config{}, fmt.Errorf("RATE_LIMIT_PER_MINUTE: invalid value %q", v)
+	for key, dst := range map[string]*int{
+		"RATE_LIMIT_PER_MINUTE":    &c.RateLimitPerMinute,
+		"REGISTRATIONS_PER_HOUR":   &c.RegistrationsPerHour,
+		"USER_REQUESTS_PER_MINUTE": &c.UserRequestsPerMinute,
+	} {
+		if v := os.Getenv(key); v != "" {
+			n, err := strconv.Atoi(v)
+			if err != nil || n <= 0 {
+				return Config{}, fmt.Errorf("%s: invalid value %q", key, v)
+			}
+			*dst = n
 		}
-		c.RateLimitPerMinute = n
+	}
+	if c.TrustedProxies, err = httpx.ParseTrustedProxies(os.Getenv("TRUSTED_PROXIES")); err != nil {
+		return Config{}, fmt.Errorf("TRUSTED_PROXIES: %w", err)
 	}
 	return c, nil
 }

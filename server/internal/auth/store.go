@@ -38,8 +38,13 @@ type Store interface {
 	ConsumeChallenge(ctx context.Context, id uuid.UUID, now time.Time) (Challenge, error)
 
 	CreateToken(ctx context.Context, tokenHash []byte, userID uuid.UUID, expiresAt time.Time) error
-	// LookupToken returns the owner of an unexpired token hash.
-	LookupToken(ctx context.Context, tokenHash []byte, now time.Time) (uuid.UUID, error)
+	// LookupToken returns the owner and expiry of an unexpired token hash.
+	LookupToken(ctx context.Context, tokenHash []byte, now time.Time) (uuid.UUID, time.Time, error)
+	// DeleteToken revokes one token. Deleting an unknown token is a no-op.
+	DeleteToken(ctx context.Context, tokenHash []byte) error
+	// DeleteUser removes the account; the schema cascades to everything it
+	// owns. Deleting an unknown user returns ErrNotFound.
+	DeleteUser(ctx context.Context, id uuid.UUID) error
 
 	// DeleteExpired removes expired challenges and tokens.
 	DeleteExpired(ctx context.Context, now time.Time) error

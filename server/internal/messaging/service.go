@@ -17,6 +17,16 @@ const MaxPayloadBytes = 64 << 10
 // MaxRecipients bounds one fan-out (the largest group, minus the sender).
 const MaxRecipients = 100
 
+// Client timestamps are display hints, but garbage must not reach the
+// database: anything before 2020 or more than a day ahead is rejected.
+var minClientTS = time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+
+const maxClientSkew = 24 * time.Hour
+
+func (s *Service) validTS(ts time.Time) bool {
+	return !ts.Before(minClientTS) && !ts.After(s.now().Add(maxClientSkew))
+}
+
 var (
 	ErrInvalidEnvelope = errors.New("messaging: invalid envelope")
 	ErrSelfRecipient   = errors.New("messaging: cannot send to self")
@@ -70,7 +80,7 @@ func NewService(store Store, hub *Hub, waker Waker, log *slog.Logger, opts Optio
 // from client input.
 func (s *Service) Accept(ctx context.Context, sender uuid.UUID, e Envelope) (Envelope, error) {
 	if e.MessageID == uuid.Nil || e.ConversationID == uuid.Nil || e.RecipientID == uuid.Nil ||
-		e.ClientTS.IsZero() || len(e.Payload) > MaxPayloadBytes {
+		!s.validTS(e.ClientTS) || len(e.Payload) > MaxPayloadBytes {
 		return Envelope{}, ErrInvalidEnvelope
 	}
 	if e.RecipientID == sender {
@@ -98,7 +108,7 @@ func (s *Service) Accept(ctx context.Context, sender uuid.UUID, e Envelope) (Env
 // learns the recipient set, which it needs for delivery, and nothing about
 // the group itself.
 func (s *Service) AcceptMulti(ctx context.Context, sender uuid.UUID, e Envelope, recipients []uuid.UUID) (Envelope, error) {
-	if e.MessageID == uuid.Nil || e.ConversationID == uuid.Nil || e.ClientTS.IsZero() ||
+	if e.MessageID == uuid.Nil || e.ConversationID == uuid.Nil || !s.validTS(e.ClientTS) ||
 		len(e.Payload) > MaxPayloadBytes || len(recipients) == 0 || len(recipients) > MaxRecipients {
 		return Envelope{}, ErrInvalidEnvelope
 	}
@@ -162,6 +172,15 @@ func (s *Service) deliver(ctx context.Context, recipient uuid.UUID) {
 		return
 	}
 	s.lastWake[recipient] = now
+	// Entries older than the interval no longer suppress anything; prune
+	// them so the map stays bounded by recently woken users.
+	if len(s.lastWake) > 10_000 {
+		for u, t := range s.lastWake {
+			if now.Sub(t) >= wakeInterval {
+				delete(s.lastWake, u)
+			}
+		}
+	}
 	s.wakeMu.Unlock()
 	go func() {
 		// Detached from the request: the push should not be cancelled when

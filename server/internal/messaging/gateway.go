@@ -19,6 +19,7 @@ type Gateway struct {
 	hub          *Hub
 	log          *slog.Logger
 	userID       func(context.Context) (uuid.UUID, bool)
+	expiry       func(context.Context) (time.Time, bool)
 	pingInterval time.Duration
 	pingTimeout  time.Duration
 	sendRate     rate.Limit
@@ -27,7 +28,11 @@ type Gateway struct {
 
 type GatewayOptions struct {
 	// UserID extracts the authenticated user set by the auth middleware.
-	UserID       func(context.Context) (uuid.UUID, bool)
+	UserID func(context.Context) (uuid.UUID, bool)
+	// TokenExpiry reports when the connection's bearer token expires; the
+	// socket is closed then (status 4001) so the client re-authenticates.
+	// Nil means connections never expire (tests only).
+	TokenExpiry  func(context.Context) (time.Time, bool)
 	PingInterval time.Duration
 	PingTimeout  time.Duration
 	// SendRate and SendBurst limit send/transient frames per connection.
@@ -47,7 +52,7 @@ func NewGateway(svc *Service, hub *Hub, log *slog.Logger, opts GatewayOptions) *
 		opts.SendRate, opts.SendBurst = 20, 40
 	}
 	return &Gateway{
-		svc: svc, hub: hub, log: log, userID: opts.UserID,
+		svc: svc, hub: hub, log: log, userID: opts.UserID, expiry: opts.TokenExpiry,
 		pingInterval: opts.PingInterval, pingTimeout: opts.PingTimeout,
 		sendRate: opts.SendRate, sendBurst: opts.SendBurst,
 	}
@@ -58,13 +63,29 @@ const (
 	writeTimeout = 10 * time.Second
 	// Base64 inflates payloads by 4/3; leave room for the JSON envelope.
 	readLimit = MaxPayloadBytes*4/3 + 4096
+	// StatusTokenExpired closes a socket whose bearer token expired. Clients
+	// fetch a fresh token and reconnect at once.
+	StatusTokenExpired websocket.StatusCode = 4001
 )
+
+var errTokenExpired = errors.New("messaging: token expired")
 
 func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	user, ok := g.userID(r.Context())
 	if !ok {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
+	}
+	var expired <-chan time.Time
+	if g.expiry != nil {
+		exp, ok := g.expiry(r.Context())
+		if !ok {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		t := time.NewTimer(time.Until(exp))
+		defer t.Stop()
+		expired = t.C
 	}
 	// The server's Read/WriteTimeout would otherwise stay attached to the
 	// hijacked connection and kill every socket after a few seconds.
@@ -88,13 +109,17 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		defer cancel()
 		g.readLoop(ctx, conn, user, replies)
 	}()
-	err = g.writeLoop(ctx, conn, user, sess, replies)
+	err = g.writeLoop(ctx, conn, user, sess, replies, expired)
 
 	// Mark the user offline before closing: a graceful close waits for the
 	// peer's close frame, and a dead peer never sends one. Messages arriving
 	// meanwhile must trigger a push, not wait on a ghost connection.
 	g.hub.unregister(user, sess)
 	cancel()
+	if errors.Is(err, errTokenExpired) {
+		_ = conn.Close(StatusTokenExpired, "token_expired")
+		return
+	}
 	if err != nil && !errors.Is(err, context.Canceled) {
 		_ = conn.CloseNow() // peer unresponsive or protocol error
 		return
@@ -184,6 +209,8 @@ func (g *Gateway) sendReply(f clientFrame, stored Envelope, err error) any {
 		return rejectedFrame{Type: frameRejected, ID: f.ID, Code: codeSelf}
 	case errors.Is(err, ErrUnknownRecipient):
 		return rejectedFrame{Type: frameRejected, ID: f.ID, Code: codeUnknownRecipient}
+	case errors.Is(err, ErrRecipientFull):
+		return rejectedFrame{Type: frameRejected, ID: f.ID, Code: codeRecipientFull}
 	default:
 		g.log.Error("accept failed", "err", err)
 		return rejectedFrame{Type: frameRejected, ID: f.ID, Code: codeInternal}
@@ -193,7 +220,7 @@ func (g *Gateway) sendReply(f clientFrame, stored Envelope, err error) any {
 // writeLoop is the only goroutine that writes to conn. Envelopes are always
 // read from the store in seq order starting after the last one sent on this
 // connection, so backlog and live delivery share one ordered path.
-func (g *Gateway) writeLoop(ctx context.Context, conn *websocket.Conn, user uuid.UUID, sess *session, replies <-chan any) error {
+func (g *Gateway) writeLoop(ctx context.Context, conn *websocket.Conn, user uuid.UUID, sess *session, replies <-chan any, expired <-chan time.Time) error {
 	ping := time.NewTicker(g.pingInterval)
 	defer ping.Stop()
 	var cursor int64
@@ -201,6 +228,8 @@ func (g *Gateway) writeLoop(ctx context.Context, conn *websocket.Conn, user uuid
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case <-expired:
+			return errTokenExpired
 		case <-sess.wake:
 			for {
 				batch, err := g.svc.Pending(ctx, user, cursor, pendingBatch)

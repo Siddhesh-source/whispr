@@ -152,14 +152,19 @@ func (l *KeyedLimiter) Allow(key string) bool {
 	return c.lim.AllowN(now, 1)
 }
 
-// RateLimiter is a per-client-IP token bucket. The client IP is taken from
-// the TCP peer address only; X-Forwarded-For is not trusted.
+// RateLimiter is a per-client-IP token bucket. The client IP comes from
+// ClientIPFrom: the TCP peer, or X-Forwarded-For only from trusted proxies.
 type RateLimiter struct {
 	keyed *KeyedLimiter
 }
 
 func NewRateLimiter(perMinute int) *RateLimiter {
-	return &RateLimiter{keyed: NewKeyedLimiter(perMinute, time.Minute)}
+	return NewRateLimiterPer(perMinute, time.Minute)
+}
+
+// NewRateLimiterPer allows n requests per client IP every per.
+func NewRateLimiterPer(n int, per time.Duration) *RateLimiter {
+	return &RateLimiter{keyed: NewKeyedLimiter(n, per)}
 }
 
 // WriteRateLimited is the 429 response every limiter uses.
@@ -170,12 +175,31 @@ func WriteRateLimited(w http.ResponseWriter, retryAfter time.Duration) {
 
 func (rl *RateLimiter) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ip, _, err := net.SplitHostPort(r.RemoteAddr)
-		if err != nil {
-			ip = r.RemoteAddr
+		if !rl.keyed.Allow(ClientIPFrom(r)) {
+			WriteRateLimited(w, rl.keyed.every)
+			return
 		}
-		if !rl.keyed.Allow(ip) {
-			WriteRateLimited(w, time.Minute)
+		next.ServeHTTP(w, r)
+	})
+}
+
+// UserLimiter is a token bucket per authenticated user, for routes behind
+// auth. key extracts the user; requests without one pass through (the auth
+// middleware has already rejected them).
+type UserLimiter struct {
+	keyed *KeyedLimiter
+	key   func(*http.Request) (string, bool)
+}
+
+// NewUserLimiter allows n requests per user every per.
+func NewUserLimiter(n int, per time.Duration, key func(*http.Request) (string, bool)) *UserLimiter {
+	return &UserLimiter{keyed: NewKeyedLimiter(n, per), key: key}
+}
+
+func (l *UserLimiter) Middleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if k, ok := l.key(r); ok && !l.keyed.Allow(k) {
+			WriteRateLimited(w, l.keyed.every)
 			return
 		}
 		next.ServeHTTP(w, r)

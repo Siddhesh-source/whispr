@@ -141,17 +141,62 @@ func (s *Service) Verify(ctx context.Context, challengeID uuid.UUID, signature [
 	return base64.RawURLEncoding.EncodeToString(raw), expiresAt, nil
 }
 
-// Authenticate resolves a bearer token to its user ID.
-func (s *Service) Authenticate(ctx context.Context, token string) (uuid.UUID, error) {
+// Authenticate resolves a bearer token to its user ID and expiry.
+func (s *Service) Authenticate(ctx context.Context, token string) (uuid.UUID, time.Time, error) {
+	hash, ok := tokenHash(token)
+	if !ok {
+		return uuid.Nil, time.Time{}, ErrUnauthorized
+	}
+	id, exp, err := s.store.LookupToken(ctx, hash, s.now())
+	if errors.Is(err, ErrNotFound) {
+		return uuid.Nil, time.Time{}, ErrUnauthorized
+	}
+	return id, exp, err
+}
+
+// Logout revokes token. An unknown or malformed token is ErrUnauthorized.
+func (s *Service) Logout(ctx context.Context, token string) error {
+	if _, _, err := s.Authenticate(ctx, token); err != nil {
+		return err
+	}
+	hash, _ := tokenHash(token)
+	return s.store.DeleteToken(ctx, hash)
+}
+
+// DeleteAccount deletes userID and everything the server holds for it. A
+// bearer token alone is not enough for an irreversible action: the caller
+// must also answer a fresh challenge for this user with a signature over
+// DeleteMessage, proving it holds the identity key. The challenge is burned
+// first, so each one gets a single attempt.
+func (s *Service) DeleteAccount(ctx context.Context, userID, challengeID uuid.UUID, signature []byte) error {
+	c, err := s.store.ConsumeChallenge(ctx, challengeID, s.now())
+	if errors.Is(err, ErrNotFound) {
+		return ErrAuthFailed
+	} else if err != nil {
+		return err
+	}
+	if c.UserID != userID {
+		return ErrAuthFailed
+	}
+	u, err := s.store.GetUser(ctx, userID)
+	if errors.Is(err, ErrNotFound) {
+		return ErrAuthFailed
+	} else if err != nil {
+		return err
+	}
+	ok, err := s.verifier.Verify(u.IdentityKey, DeleteMessage(u.ID, c.Nonce), signature)
+	if err != nil || !ok {
+		return ErrAuthFailed
+	}
+	return s.store.DeleteUser(ctx, userID)
+}
+
+func tokenHash(token string) ([]byte, bool) {
 	raw, err := base64.RawURLEncoding.DecodeString(token)
 	if err != nil || len(raw) != tokenLen {
-		return uuid.Nil, ErrUnauthorized
+		return nil, false
 	}
-	id, err := s.store.LookupToken(ctx, hashToken(raw), s.now())
-	if errors.Is(err, ErrNotFound) {
-		return uuid.Nil, ErrUnauthorized
-	}
-	return id, err
+	return hashToken(raw), true
 }
 
 func (s *Service) User(ctx context.Context, id uuid.UUID) (User, error) {

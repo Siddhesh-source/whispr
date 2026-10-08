@@ -101,17 +101,61 @@ func storeContract(t *testing.T, newStore func(t *testing.T) Store) {
 		if err := s.CreateToken(ctx, hash, u.ID, now.Add(time.Minute)); err != nil {
 			t.Fatal(err)
 		}
-		if id, err := s.LookupToken(ctx, hash, now); err != nil || id != u.ID {
-			t.Fatalf("lookup: %v %v", id, err)
+		if id, exp, err := s.LookupToken(ctx, hash, now); err != nil || id != u.ID || !exp.Equal(now.Add(time.Minute)) {
+			t.Fatalf("lookup: %v %v %v", id, exp, err)
 		}
-		if _, err := s.LookupToken(ctx, hash, now.Add(time.Minute)); !errors.Is(err, ErrNotFound) {
+		if _, _, err := s.LookupToken(ctx, hash, now.Add(time.Minute)); !errors.Is(err, ErrNotFound) {
 			t.Fatalf("expired lookup err = %v", err)
 		}
 		if err := s.DeleteExpired(ctx, now.Add(2*time.Minute)); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := s.LookupToken(ctx, hash, now); !errors.Is(err, ErrNotFound) {
+		if _, _, err := s.LookupToken(ctx, hash, now); !errors.Is(err, ErrNotFound) {
 			t.Fatalf("token survived DeleteExpired: %v", err)
+		}
+	})
+
+	t.Run("DeleteTokenRevokesOnlyThatToken", func(t *testing.T) {
+		s := newStore(t)
+		u := mustUser(t, s)
+		a, b := hashToken([]byte("a")), hashToken([]byte("b"))
+		for _, h := range [][]byte{a, b} {
+			if err := s.CreateToken(ctx, h, u.ID, now.Add(time.Minute)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := s.DeleteToken(ctx, a); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := s.LookupToken(ctx, a, now); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("revoked token still valid: %v", err)
+		}
+		if _, _, err := s.LookupToken(ctx, b, now); err != nil {
+			t.Fatalf("other token revoked: %v", err)
+		}
+		if err := s.DeleteToken(ctx, a); err != nil {
+			t.Fatalf("second delete: %v", err)
+		}
+	})
+
+	t.Run("DeleteUserRemovesUserAndTokens", func(t *testing.T) {
+		s := newStore(t)
+		u := mustUser(t, s)
+		h := hashToken([]byte("t"))
+		if err := s.CreateToken(ctx, h, u.ID, now.Add(time.Minute)); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.DeleteUser(ctx, u.ID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.GetUser(ctx, u.ID); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("user survived: %v", err)
+		}
+		if _, _, err := s.LookupToken(ctx, h, now); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("token survived account deletion: %v", err)
+		}
+		if err := s.DeleteUser(ctx, u.ID); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("second delete err = %v", err)
 		}
 	})
 }

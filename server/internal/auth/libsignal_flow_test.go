@@ -48,7 +48,7 @@ func TestFullFlowWithRealLibsignal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("verify: %v", err)
 	}
-	if id, err := svc.Authenticate(ctx, tok); err != nil || id != u.ID {
+	if id, _, err := svc.Authenticate(ctx, tok); err != nil || id != u.ID {
 		t.Fatalf("authenticate: %v %v", id, err)
 	}
 }

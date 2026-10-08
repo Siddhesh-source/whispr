@@ -38,7 +38,17 @@ type Envelope struct {
 	Payload        []byte
 }
 
-var ErrUnknownRecipient = errors.New("messaging: unknown recipient")
+var (
+	ErrUnknownRecipient = errors.New("messaging: unknown recipient")
+	// ErrRecipientFull: the sender already has MaxUndelivered envelopes
+	// waiting for this recipient.
+	ErrRecipientFull = errors.New("messaging: too many undelivered envelopes for this recipient")
+)
+
+// MaxUndelivered bounds the client envelopes one sender may have queued for
+// one recipient, so a single account cannot fill another's queue. Server
+// delivery receipts are not counted.
+const MaxUndelivered = 1000
 
 type Store interface {
 	// Accept persists e. If (sender, message_id) was accepted before, nothing
@@ -60,10 +70,31 @@ type Store interface {
 }
 
 type PGStore struct {
-	pool *pgxpool.Pool
+	pool  *pgxpool.Pool
+	quota int
 }
 
-func NewPGStore(pool *pgxpool.Pool) *PGStore { return &PGStore{pool: pool} }
+func NewPGStore(pool *pgxpool.Pool) *PGStore { return &PGStore{pool: pool, quota: MaxUndelivered} }
+
+// WithQuota returns a copy with a different undelivered quota (tests).
+func (s *PGStore) WithQuota(n int) *PGStore { return &PGStore{pool: s.pool, quota: n} }
+
+// checkQuota must run under the recipient's lock. The count stops at
+// quota+1 rows, so its cost is bounded however full the queue is.
+func (s *PGStore) checkQuota(ctx context.Context, tx pgx.Tx, sender, recipient uuid.UUID) error {
+	var n int
+	err := tx.QueryRow(ctx, `
+		SELECT count(*) FROM (
+			SELECT 1 FROM envelopes WHERE recipient_id = $1 AND sender_id = $2 AND kind = 1 LIMIT $3
+		) q`, recipient, sender, s.quota+1).Scan(&n)
+	if err != nil {
+		return err
+	}
+	if n >= s.quota {
+		return ErrRecipientFull
+	}
+	return nil
+}
 
 var _ Store = (*PGStore)(nil)
 
@@ -75,6 +106,15 @@ func (s *PGStore) Accept(ctx context.Context, e Envelope) (Envelope, bool, error
 		// Without this, two concurrent senders could commit seq 11 before 10
 		// and a delivery cursor that already passed 11 would skip 10.
 		if err := lockRecipient(ctx, tx, e.RecipientID); err != nil {
+			return err
+		}
+		if dupStored, ok, err := lookupAccepted(ctx, tx, e); err != nil || ok {
+			if ok {
+				dup, stored = true, dupStored
+			}
+			return err
+		}
+		if err := s.checkQuota(ctx, tx, e.SenderID, e.RecipientID); err != nil {
 			return err
 		}
 		var seq int64
@@ -119,6 +159,17 @@ func (s *PGStore) AcceptMulti(ctx context.Context, e Envelope, recipients []uuid
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		for _, r := range sorted {
 			if err := lockRecipient(ctx, tx, r); err != nil {
+				return err
+			}
+		}
+		if dupStored, ok, err := lookupAccepted(ctx, tx, e); err != nil || ok {
+			if ok {
+				dup, stored = true, dupStored
+			}
+			return err
+		}
+		for _, r := range sorted {
+			if err := s.checkQuota(ctx, tx, e.SenderID, r); err != nil {
 				return err
 			}
 		}
@@ -230,6 +281,20 @@ func (s *PGStore) Purge(ctx context.Context, before time.Time) error {
 	}
 	_, err := s.pool.Exec(ctx, `DELETE FROM accepted_messages WHERE server_ts < $1`, before)
 	return err
+}
+
+// lookupAccepted reports a retried send: a duplicate is acknowledged with
+// its original seq even when the quota is now full.
+func lookupAccepted(ctx context.Context, tx pgx.Tx, e Envelope) (Envelope, bool, error) {
+	stored := e
+	err := tx.QueryRow(ctx, `
+		SELECT seq, server_ts FROM accepted_messages WHERE sender_id = $1 AND message_id = $2`,
+		e.SenderID, e.MessageID,
+	).Scan(&stored.Seq, &stored.ServerTS)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Envelope{}, false, nil
+	}
+	return stored, err == nil, err
 }
 
 func lockRecipient(ctx context.Context, tx pgx.Tx, recipient uuid.UUID) error {

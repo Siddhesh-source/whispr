@@ -85,7 +85,9 @@ func run() error {
 	hub := messaging.NewHub()
 	msgSvc := messaging.NewService(messaging.NewPGStore(pool), hub, waker, log, messaging.Options{})
 	go msgSvc.RunJanitor(ctx, time.Hour)
-	gateway := messaging.NewGateway(msgSvc, hub, log, messaging.GatewayOptions{UserID: auth.UserIDFrom})
+	gateway := messaging.NewGateway(msgSvc, hub, log, messaging.GatewayOptions{
+		UserID: auth.UserIDFrom, TokenExpiry: auth.TokenExpiryFrom,
+	})
 
 	var media *attachments.Module
 	if cfg.S3Endpoint != "" {
@@ -110,19 +112,27 @@ func run() error {
 	srv := &http.Server{
 		Addr: cfg.ListenAddr,
 		Handler: server.NewRouter(server.Deps{
-			Log:         log,
-			DB:          pool,
-			Auth:        authSvc,
-			RateLimiter: httpx.NewRateLimiter(cfg.RateLimitPerMinute),
-			Messaging:   messaging.New(gateway),
-			Contacts:    contacts.New(authStore, log),
-			Keys:        keys.NewModule(keys.NewPGStore(pool), verifier, log, auth.UserIDFrom, keys.DefaultLimits()),
-			Push:        push.NewModule(pushStore, log, auth.UserIDFrom),
+			Log:             log,
+			DB:              pool,
+			Auth:            authSvc,
+			RateLimiter:     httpx.NewRateLimiter(cfg.RateLimitPerMinute),
+			RegisterLimiter: httpx.NewRateLimiterPer(cfg.RegistrationsPerHour, time.Hour),
+			UserLimiter: httpx.NewUserLimiter(cfg.UserRequestsPerMinute, time.Minute, func(r *http.Request) (string, bool) {
+				id, ok := auth.UserIDFrom(r.Context())
+				return id.String(), ok
+			}),
+			TrustedProxies: cfg.TrustedProxies,
+			OnSignOut:      hub.Disconnect,
+			Messaging:      messaging.New(gateway),
+			Contacts:       contacts.New(authStore, log),
+			Keys:           keys.NewModule(keys.NewPGStore(pool), verifier, log, auth.UserIDFrom, keys.DefaultLimits()),
+			Push:           push.NewModule(pushStore, log, auth.UserIDFrom),
 			// Username lookups get a stricter per-IP limit than other calls.
 			Profile:     profile.NewModule(profile.NewStore(pool), log, auth.UserIDFrom, httpx.NewRateLimiter(10).Middleware),
 			Attachments: media,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
+		MaxHeaderBytes:    16 << 10,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      15 * time.Second,
 		IdleTimeout:       60 * time.Second,

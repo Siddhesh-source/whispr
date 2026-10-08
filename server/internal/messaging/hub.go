@@ -47,6 +47,18 @@ func (h *Hub) register(user uuid.UUID, s *session) {
 	s.signal()
 }
 
+// Disconnect closes the user's live connection, if any (after a logout or
+// account deletion). A reconnect must authenticate again.
+func (h *Hub) Disconnect(user uuid.UUID) {
+	h.mu.Lock()
+	s := h.conns[user]
+	delete(h.conns, user)
+	h.mu.Unlock()
+	if s != nil {
+		s.kick()
+	}
+}
+
 func (h *Hub) unregister(user uuid.UUID, s *session) {
 	h.mu.Lock()
 	if h.conns[user] == s {

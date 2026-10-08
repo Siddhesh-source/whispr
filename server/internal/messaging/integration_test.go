@@ -58,6 +58,8 @@ type harnessOpts struct {
 	serverTimeouts            time.Duration
 	sendRate                  rate.Limit
 	sendBurst                 int
+	tokenTTL                  time.Duration
+	quota                     int
 }
 
 // newServer starts a fresh server instance (new hub, new service) on pool,
@@ -65,16 +67,23 @@ type harnessOpts struct {
 func newServer(t *testing.T, pool *pgxpool.Pool, o harnessOpts) *harness {
 	t.Helper()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	authSvc := auth.NewService(auth.NewPGStore(pool), sigverifytest.Fake{}, auth.Options{TokenTTL: time.Hour, ChallengeTTL: time.Minute})
+	if o.tokenTTL == 0 {
+		o.tokenTTL = time.Hour
+	}
+	authSvc := auth.NewService(auth.NewPGStore(pool), sigverifytest.Fake{}, auth.Options{TokenTTL: o.tokenTTL, ChallengeTTL: time.Minute})
 	hub := messaging.NewHub()
 	waker := &countingWaker{}
-	svc := messaging.NewService(messaging.NewPGStore(pool), hub, waker, log, messaging.Options{})
+	store := messaging.NewPGStore(pool)
+	if o.quota > 0 {
+		store = store.WithQuota(o.quota)
+	}
+	svc := messaging.NewService(store, hub, waker, log, messaging.Options{})
 	gw := messaging.NewGateway(svc, hub, log, messaging.GatewayOptions{
-		UserID: auth.UserIDFrom, PingInterval: o.pingInterval, PingTimeout: o.pingTimeout,
+		UserID: auth.UserIDFrom, TokenExpiry: auth.TokenExpiryFrom, PingInterval: o.pingInterval, PingTimeout: o.pingTimeout,
 		SendRate: o.sendRate, SendBurst: o.sendBurst,
 	})
 	router := server.NewRouter(server.Deps{
-		Log: log, DB: pool, Auth: authSvc, RateLimiter: httpx.NewRateLimiter(1000),
+		Log: log, DB: pool, Auth: authSvc, RateLimiter: httpx.NewRateLimiter(1000), OnSignOut: hub.Disconnect,
 		Messaging: messaging.New(gw), Contacts: contacts.New(auth.NewPGStore(pool), log),
 		Keys:    keys.NewModule(keys.NewPGStore(pool), sigverifytest.Fake{}, log, auth.UserIDFrom, keys.DefaultLimits()),
 		Push:    push.NewModule(push.NewPGStore(pool), log, auth.UserIDFrom),
@@ -93,6 +102,7 @@ func newServer(t *testing.T, pool *pgxpool.Pool, o harnessOpts) *harness {
 type user struct {
 	id    uuid.UUID
 	token string
+	key   []byte
 }
 
 func (h *harness) newUser(name string) user {
@@ -103,7 +113,7 @@ func (h *harness) newUser(name string) user {
 	if err != nil {
 		h.t.Fatal(err)
 	}
-	return user{id: u.ID, token: h.login(u.ID, key)}
+	return user{id: u.ID, token: h.login(u.ID, key), key: key}
 }
 
 func (h *harness) login(id uuid.UUID, key []byte) string {

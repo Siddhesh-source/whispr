@@ -51,19 +51,35 @@ type meResponse struct {
 	DisplayName string    `json:"display_name"`
 }
 
-type Handler struct {
-	svc *Service
-	log *slog.Logger
+type deleteAccountRequest struct {
+	ChallengeID uuid.UUID `json:"challenge_id"`
+	Signature   []byte    `json:"signature"`
 }
 
-func NewHandler(svc *Service, log *slog.Logger) *Handler {
-	return &Handler{svc: svc, log: log}
+type Handler struct {
+	svc       *Service
+	log       *slog.Logger
+	onSignOut func(uuid.UUID)
+}
+
+// NewHandler serves the auth endpoints. onSignOut (may be nil) runs after a
+// logout or account deletion, to close the user's live connections.
+func NewHandler(svc *Service, log *slog.Logger, onSignOut func(uuid.UUID)) *Handler {
+	if onSignOut == nil {
+		onSignOut = func(uuid.UUID) {}
+	}
+	return &Handler{svc: svc, log: log, onSignOut: onSignOut}
 }
 
 // PublicRoutes mounts the unauthenticated endpoints. The caller is expected
-// to wrap them in a rate limiter.
-func (h *Handler) PublicRoutes(r chi.Router) {
-	r.Post("/register", h.register)
+// to wrap them in a rate limiter; registerLimit (may be nil) is an extra,
+// stricter limit on account creation.
+func (h *Handler) PublicRoutes(r chi.Router, registerLimit func(http.Handler) http.Handler) {
+	if registerLimit != nil {
+		r.With(registerLimit).Post("/register", h.register)
+	} else {
+		r.Post("/register", h.register)
+	}
 	r.Post("/auth/challenge", h.challenge)
 	r.Post("/auth/verify", h.verify)
 }
@@ -71,6 +87,8 @@ func (h *Handler) PublicRoutes(r chi.Router) {
 // AuthedRoutes mounts endpoints that require RequireAuth.
 func (h *Handler) AuthedRoutes(r chi.Router) {
 	r.Get("/me", h.me)
+	r.Delete("/me", h.deleteAccount)
+	r.Post("/auth/logout", h.logout)
 }
 
 func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
@@ -144,6 +162,42 @@ func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, meResponse{UserID: u.ID, DisplayName: u.DisplayName})
 }
 
+func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
+	id, _ := UserIDFrom(r.Context())
+	token, _ := bearer(r)
+	switch err := h.svc.Logout(r.Context(), token); {
+	case errors.Is(err, ErrUnauthorized):
+		httpx.WriteError(w, http.StatusUnauthorized, "unauthorized", "missing or invalid token")
+		return
+	case err != nil:
+		h.internal(w, "logout", err)
+		return
+	}
+	h.onSignOut(id)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// deleteAccount needs the bearer token and a fresh challenge signed with
+// DeleteMessage (see Service.DeleteAccount).
+func (h *Handler) deleteAccount(w http.ResponseWriter, r *http.Request) {
+	id, _ := UserIDFrom(r.Context())
+	var req deleteAccountRequest
+	if err := httpx.DecodeJSON(w, r, &req); err != nil || req.ChallengeID == uuid.Nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_request", "malformed request")
+		return
+	}
+	switch err := h.svc.DeleteAccount(r.Context(), id, req.ChallengeID, req.Signature); {
+	case errors.Is(err, ErrAuthFailed):
+		httpx.WriteError(w, http.StatusUnauthorized, "auth_failed", "authentication failed")
+		return
+	case err != nil:
+		h.internal(w, "delete account", err)
+		return
+	}
+	h.onSignOut(id)
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (h *Handler) internal(w http.ResponseWriter, op string, err error) {
 	h.log.Error("auth handler error", "op", op, "err", err)
 	httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal error")
@@ -151,22 +205,39 @@ func (h *Handler) internal(w http.ResponseWriter, op string, err error) {
 
 type ctxKey struct{}
 
+type session struct {
+	id        uuid.UUID
+	expiresAt time.Time
+}
+
 // UserIDFrom returns the authenticated user ID set by RequireAuth.
 func UserIDFrom(ctx context.Context) (uuid.UUID, bool) {
-	id, ok := ctx.Value(ctxKey{}).(uuid.UUID)
-	return id, ok
+	s, ok := ctx.Value(ctxKey{}).(session)
+	return s.id, ok
+}
+
+// TokenExpiryFrom returns when the request's bearer token expires. Long-lived
+// connections must end then, or a revoked or expired token would live on.
+func TokenExpiryFrom(ctx context.Context) (time.Time, bool) {
+	s, ok := ctx.Value(ctxKey{}).(session)
+	return s.expiresAt, ok
+}
+
+func bearer(r *http.Request) (string, bool) {
+	token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+	return token, ok && token != ""
 }
 
 // RequireAuth rejects requests without a valid "Authorization: Bearer" token.
 func RequireAuth(svc *Service) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-			if !ok || token == "" {
+			token, ok := bearer(r)
+			if !ok {
 				httpx.WriteError(w, http.StatusUnauthorized, "unauthorized", "missing or invalid token")
 				return
 			}
-			id, err := svc.Authenticate(r.Context(), token)
+			id, exp, err := svc.Authenticate(r.Context(), token)
 			if err != nil {
 				if !errors.Is(err, ErrUnauthorized) {
 					httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal error")
@@ -175,7 +246,7 @@ func RequireAuth(svc *Service) func(http.Handler) http.Handler {
 				httpx.WriteError(w, http.StatusUnauthorized, "unauthorized", "missing or invalid token")
 				return
 			}
-			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxKey{}, id)))
+			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxKey{}, session{id: id, expiresAt: exp})))
 		})
 	}
 }

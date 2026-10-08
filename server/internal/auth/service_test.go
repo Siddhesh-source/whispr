@@ -56,7 +56,7 @@ func TestRegisterAndAuthenticate(t *testing.T) {
 	u, key := register(t, svc, "Ada")
 	tok := login(t, svc, u, key)
 
-	id, err := svc.Authenticate(context.Background(), tok)
+	id, _, err := svc.Authenticate(context.Background(), tok)
 	if err != nil || id != u.ID {
 		t.Fatalf("Authenticate = %v, %v", id, err)
 	}
@@ -157,7 +157,7 @@ func TestTokenExpires(t *testing.T) {
 	u, key := register(t, svc, "Ada")
 	tok := login(t, svc, u, key)
 	clock.t = clock.t.Add(15 * time.Minute)
-	if _, err := svc.Authenticate(context.Background(), tok); !errors.Is(err, ErrUnauthorized) {
+	if _, _, err := svc.Authenticate(context.Background(), tok); !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -165,7 +165,7 @@ func TestTokenExpires(t *testing.T) {
 func TestAuthenticateRejectsMalformedTokens(t *testing.T) {
 	svc, _ := newTestService(t)
 	for _, tok := range []string{"", "!!!", "c2hvcnQ", strings.Repeat("A", 43)} {
-		if _, err := svc.Authenticate(context.Background(), tok); !errors.Is(err, ErrUnauthorized) {
+		if _, _, err := svc.Authenticate(context.Background(), tok); !errors.Is(err, ErrUnauthorized) {
 			t.Errorf("token %q: err = %v", tok, err)
 		}
 	}

@@ -86,14 +86,42 @@ func (m *memStore) CreateToken(_ context.Context, hash []byte, userID uuid.UUID,
 	return nil
 }
 
-func (m *memStore) LookupToken(_ context.Context, hash []byte, now time.Time) (uuid.UUID, error) {
+func (m *memStore) LookupToken(_ context.Context, hash []byte, now time.Time) (uuid.UUID, time.Time, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	t, ok := m.tokens[string(hash)]
 	if !ok || !t.expiresAt.After(now) {
-		return uuid.Nil, ErrNotFound
+		return uuid.Nil, time.Time{}, ErrNotFound
 	}
-	return t.userID, nil
+	return t.userID, t.expiresAt, nil
+}
+
+func (m *memStore) DeleteToken(_ context.Context, hash []byte) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.tokens, string(hash))
+	return nil
+}
+
+// DeleteUser mirrors the schema's ON DELETE CASCADE.
+func (m *memStore) DeleteUser(_ context.Context, id uuid.UUID) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.users[id]; !ok {
+		return ErrNotFound
+	}
+	delete(m.users, id)
+	for h, t := range m.tokens {
+		if t.userID == id {
+			delete(m.tokens, h)
+		}
+	}
+	for cid, c := range m.challenges {
+		if c.UserID == id {
+			delete(m.challenges, cid)
+		}
+	}
+	return nil
 }
 
 func (m *memStore) DeleteExpired(_ context.Context, now time.Time) error {

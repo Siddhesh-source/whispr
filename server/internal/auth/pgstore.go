@@ -82,16 +82,33 @@ func (s *PGStore) CreateToken(ctx context.Context, tokenHash []byte, userID uuid
 	return err
 }
 
-func (s *PGStore) LookupToken(ctx context.Context, tokenHash []byte, now time.Time) (uuid.UUID, error) {
+func (s *PGStore) LookupToken(ctx context.Context, tokenHash []byte, now time.Time) (uuid.UUID, time.Time, error) {
 	var id uuid.UUID
+	var exp time.Time
 	err := s.pool.QueryRow(ctx, `
-		SELECT user_id FROM auth_tokens WHERE token_hash = $1 AND expires_at > $2`,
+		SELECT user_id, expires_at FROM auth_tokens WHERE token_hash = $1 AND expires_at > $2`,
 		tokenHash, now,
-	).Scan(&id)
+	).Scan(&id, &exp)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return uuid.Nil, ErrNotFound
+		return uuid.Nil, time.Time{}, ErrNotFound
 	}
-	return id, err
+	return id, exp, err
+}
+
+func (s *PGStore) DeleteToken(ctx context.Context, tokenHash []byte) error {
+	_, err := s.pool.Exec(ctx, `DELETE FROM auth_tokens WHERE token_hash = $1`, tokenHash)
+	return err
+}
+
+func (s *PGStore) DeleteUser(ctx context.Context, id uuid.UUID) error {
+	tag, err := s.pool.Exec(ctx, `DELETE FROM users WHERE id = $1`, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func (s *PGStore) DeleteExpired(ctx context.Context, now time.Time) error {
