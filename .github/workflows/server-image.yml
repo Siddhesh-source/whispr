@@ -1,0 +1,46 @@
+name: server-image
+
+# Builds the production server image for linux/arm64 (the AWS t4g host in
+# docs/DEPLOYMENT.md) on a native ARM runner and keeps it as a workflow
+# artifact (docker save, zstd). Deploys download it with `gh run download`
+# and `docker load` it on the host, so the 1 GB instance never compiles
+# libsignal and no registry is needed.
+on:
+  push:
+    branches: [main]
+    paths: ["server/**", ".github/workflows/server-image.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: server-image-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  arm64:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: server
+          platforms: linux/arm64
+          tags: whispr-server:${{ github.sha }}
+          outputs: type=docker,dest=${{ runner.temp }}/whispr-server.tar
+          cache-from: type=gha,scope=server-arm64
+          cache-to: type=gha,scope=server-arm64,mode=max
+      - name: Compress
+        run: |
+          zstd -19 -T0 --rm "$RUNNER_TEMP/whispr-server.tar" -o "$RUNNER_TEMP/whispr-server-arm64.tar.zst"
+          ls -la "$RUNNER_TEMP/whispr-server-arm64.tar.zst"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: whispr-server-arm64
+          path: ${{ runner.temp }}/whispr-server-arm64.tar.zst
+          compression-level: 0 # already zstd
+          retention-days: 14
