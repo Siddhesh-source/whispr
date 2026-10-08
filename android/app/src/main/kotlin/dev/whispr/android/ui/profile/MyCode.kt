@@ -28,6 +28,7 @@ import dev.whispr.android.R
 import dev.whispr.core.designsystem.component.LoadingState
 import dev.whispr.core.designsystem.component.QrCodeImage
 import dev.whispr.core.designsystem.component.WhisprTopBar
+import dev.whispr.core.designsystem.theme.WhisprFonts
 import dev.whispr.core.designsystem.theme.WhisprTheme
 import dev.whispr.domain.repository.ContactsRepository
 import dev.whispr.domain.repository.ProfileRepository
@@ -88,8 +89,8 @@ fun MyCodeScreen(state: MyCodeUiState, onBack: () -> Unit) {
                     state.username?.let {
                         Text(
                             stringResource(R.string.my_code_username, it),
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.primary,
+                            style = MaterialTheme.typography.bodyLarge.copy(fontFamily = WhisprFonts.Mono),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                     QrCodeImage(

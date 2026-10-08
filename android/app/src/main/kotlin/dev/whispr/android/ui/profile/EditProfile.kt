@@ -44,8 +44,10 @@ import dev.whispr.android.R
 import dev.whispr.android.ui.rememberAvatarBitmap
 import dev.whispr.core.designsystem.component.LoadingState
 import dev.whispr.core.designsystem.component.WhisprAvatar
+import dev.whispr.core.designsystem.component.WhisprFields
 import dev.whispr.core.designsystem.component.WhisprPrimaryButton
 import dev.whispr.core.designsystem.component.WhisprTopBar
+import dev.whispr.core.designsystem.theme.WhisprFonts
 import dev.whispr.core.designsystem.theme.WhisprTheme
 import dev.whispr.domain.model.AuthError
 import dev.whispr.domain.model.AvatarSource
@@ -198,6 +200,10 @@ fun EditProfileScreen(
                 )
 
                 OutlinedTextField(
+
+                    shape = WhisprFields.shape,
+
+                    colors = WhisprFields.colors(),
                     value = state.name,
                     onValueChange = onName,
                     label = { Text(stringResource(R.string.profile_name_label)) },
@@ -229,14 +235,16 @@ fun EditProfileScreen(
                     if (username != null) {
                         Text(
                             username,
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.primary,
+                            style = MaterialTheme.typography.bodyLarge.copy(fontFamily = WhisprFonts.Mono),
+                            color = MaterialTheme.colorScheme.onSurface,
                         )
                         TextButton(onClick = onClear, enabled = !state.busy) {
                             Text(stringResource(R.string.profile_remove_username))
                         }
                     } else {
                         OutlinedTextField(
+                            shape = WhisprFields.shape,
+                            colors = WhisprFields.colors(),
                             value = state.nicknameInput,
                             onValueChange = onNickname,
                             label = { Text(stringResource(R.string.profile_nickname_label)) },

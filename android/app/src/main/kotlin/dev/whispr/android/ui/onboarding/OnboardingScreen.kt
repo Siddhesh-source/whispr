@@ -47,6 +47,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.whispr.android.R
 import dev.whispr.core.designsystem.component.OfflineBanner
 import dev.whispr.core.designsystem.component.WhisprAvatar
+import dev.whispr.core.designsystem.component.WhisprFields
 import dev.whispr.core.designsystem.component.WhisprPrimaryButton
 import dev.whispr.core.designsystem.theme.WhisprTheme
 import dev.whispr.domain.usecase.DisplayNameValidator
@@ -172,6 +173,8 @@ private fun AvatarPicker(state: OnboardingUiState, preview: ImageBitmap?, onPick
 @Composable
 private fun NameField(state: OnboardingUiState, onNameChange: (String) -> Unit, onSubmit: () -> Unit) {
     OutlinedTextField(
+        shape = WhisprFields.shape,
+        colors = WhisprFields.colors(),
         value = state.name,
         onValueChange = onNameChange,
         label = { Text(stringResource(R.string.onboarding_name_label)) },

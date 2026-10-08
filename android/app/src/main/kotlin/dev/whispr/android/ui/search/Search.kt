@@ -34,6 +34,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.whispr.android.R
 import dev.whispr.android.ui.formatTimestamp
 import dev.whispr.core.designsystem.component.EmptyState
+import dev.whispr.core.designsystem.component.WhisprFields
 import dev.whispr.core.designsystem.component.WhisprTopBar
 import dev.whispr.core.designsystem.icon.WhisprIcons
 import dev.whispr.core.designsystem.theme.WhisprTheme
@@ -102,6 +103,8 @@ fun SearchScreen(state: SearchUiState, onBack: () -> Unit, onQuery: (String) -> 
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).imePadding()) {
             OutlinedTextField(
+                shape = WhisprFields.shape,
+                colors = WhisprFields.colors(),
                 value = state.query,
                 onValueChange = onQuery,
                 singleLine = true,
@@ -126,7 +129,14 @@ fun SearchScreen(state: SearchUiState, onBack: () -> Unit, onQuery: (String) -> 
                     else -> LazyColumn(verticalArrangement = Arrangement.Top) {
                         items(hits, key = { it.conversation.value + it.message.id }) { hit ->
                             ListItem(
-                                headlineContent = { Text(hit.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                headlineContent = {
+                                    Text(
+                                        hit.title,
+                                        style = MaterialTheme.typography.titleMedium,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                },
                                 supportingContent = {
                                     Text(
                                         if (hit.message.outgoing) {

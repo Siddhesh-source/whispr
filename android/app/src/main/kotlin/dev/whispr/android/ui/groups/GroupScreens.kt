@@ -51,6 +51,7 @@ import dev.whispr.android.R
 import dev.whispr.core.designsystem.component.EmptyState
 import dev.whispr.core.designsystem.component.LoadingState
 import dev.whispr.core.designsystem.component.WhisprAvatar
+import dev.whispr.core.designsystem.component.WhisprFields
 import dev.whispr.core.designsystem.component.WhisprPrimaryButton
 import dev.whispr.core.designsystem.component.WhisprTopBar
 import dev.whispr.core.designsystem.icon.WhisprIcons
@@ -120,6 +121,8 @@ fun NewGroupScreen(
                     )
                 }
                 OutlinedTextField(
+                    shape = WhisprFields.shape,
+                    colors = WhisprFields.colors(),
                     value = state.name,
                     onValueChange = onName,
                     label = { Text(stringResource(R.string.group_name_label)) },
@@ -130,8 +133,8 @@ fun NewGroupScreen(
             }
             Text(
                 pluralStringResource(R.plurals.group_pick_members, state.selected.size, state.selected.size),
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.primary,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = WhisprTheme.spacing.lg).semantics { heading() },
             )
             if (state.contacts.isEmpty()) {
@@ -244,8 +247,8 @@ fun GroupInfoScreen(
                         group.members.count {
                             !it.invited
                         }.let { pluralStringResource(R.plurals.group_members, it, it) },
-                        style = MaterialTheme.typography.titleSmall,
-                        color = MaterialTheme.colorScheme.primary,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(WhisprTheme.spacing.lg).semantics { heading() },
                     )
                 }
@@ -419,6 +422,8 @@ private fun RenameDialog(current: String, onDismiss: () -> Unit, onSave: (String
         title = { Text(stringResource(R.string.group_rename)) },
         text = {
             OutlinedTextField(
+                shape = WhisprFields.shape,
+                colors = WhisprFields.colors(),
                 value = name,
                 onValueChange = { name = it.take(NewGroupUiState.MAX_NAME) },
                 label = { Text(stringResource(R.string.group_name_label)) },

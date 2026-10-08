@@ -37,6 +37,7 @@ import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.whispr.android.R
 import dev.whispr.core.designsystem.component.OfflineBanner
+import dev.whispr.core.designsystem.component.WhisprFields
 import dev.whispr.core.designsystem.component.WhisprPrimaryButton
 import dev.whispr.core.designsystem.component.WhisprTopBar
 import dev.whispr.core.designsystem.icon.WhisprIcons
@@ -163,6 +164,8 @@ fun AddContactScreen(
                     )
                     Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(spacing.sm)) {
                         OutlinedTextField(
+                            shape = WhisprFields.shape,
+                            colors = WhisprFields.colors(),
                             value = state.username,
                             onValueChange = onUsername,
                             label = { Text(stringResource(R.string.new_chat_username_label)) },

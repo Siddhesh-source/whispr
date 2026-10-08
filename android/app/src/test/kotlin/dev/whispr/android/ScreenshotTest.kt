@@ -10,8 +10,20 @@ import dev.whispr.android.ui.chat.group
 import dev.whispr.android.ui.chats.ChatsContent
 import dev.whispr.android.ui.chats.ChatsScreen
 import dev.whispr.android.ui.chats.ChatsUiState
+import dev.whispr.android.ui.contacts.AddContactScreen
+import dev.whispr.android.ui.contacts.AddContactUiState
+import dev.whispr.android.ui.groups.GroupInfoScreen
+import dev.whispr.android.ui.groups.GroupInfoUiState
+import dev.whispr.android.ui.groups.NewGroupScreen
+import dev.whispr.android.ui.groups.NewGroupUiState
 import dev.whispr.android.ui.onboarding.OnboardingScreen
 import dev.whispr.android.ui.onboarding.OnboardingUiState
+import dev.whispr.android.ui.profile.EditProfileScreen
+import dev.whispr.android.ui.profile.EditProfileUiState
+import dev.whispr.android.ui.profile.MyCodeScreen
+import dev.whispr.android.ui.profile.MyCodeUiState
+import dev.whispr.android.ui.search.SearchScreen
+import dev.whispr.android.ui.search.SearchUiState
 import dev.whispr.android.ui.settings.ConnectionStatus
 import dev.whispr.android.ui.settings.SettingsScreen
 import dev.whispr.android.ui.settings.SettingsUiState
@@ -22,11 +34,18 @@ import dev.whispr.core.designsystem.theme.WhisprTheme
 import dev.whispr.domain.model.Contact
 import dev.whispr.domain.model.ConversationId
 import dev.whispr.domain.model.ConversationSummary
+import dev.whispr.domain.model.Group
+import dev.whispr.domain.model.GroupId
+import dev.whispr.domain.model.GroupMember
+import dev.whispr.domain.model.GroupRole
+import dev.whispr.domain.model.GroupStatus
 import dev.whispr.domain.model.Message
 import dev.whispr.domain.model.MessageStatus
+import dev.whispr.domain.model.MyProfile
 import dev.whispr.domain.model.Quote
 import dev.whispr.domain.model.Reaction
 import dev.whispr.domain.model.SafetyNumber
+import dev.whispr.domain.model.SearchHit
 import dev.whispr.domain.model.TrustState
 import dev.whispr.domain.model.UserId
 import java.time.Duration
@@ -64,6 +83,105 @@ class ScreenshotTest {
     @Test fun onboardingDark() = capture("onboarding_dark", dark = true) { onboarding() }
 
     @Test fun verifyLight() = capture("verify_light") { verify() }
+
+    @Test fun addContactLight() = capture("add_contact_light") {
+        AddContactScreen(
+            AddContactUiState(username = "maya.42"),
+            onBack = {},
+            onUsername = {},
+            onSubmit = {},
+            onScan = {},
+            onMyCode = {},
+        )
+    }
+
+    @Test fun myCodeLight() = capture("my_code_light") {
+        MyCodeScreen(
+            MyCodeUiState(
+                code = "whispr:AQAAAAAAAAAAAAAAAAAAAAAAAA",
+                name = "Ada Lovelace",
+                username = "ada.42",
+            ),
+            onBack = {
+            },
+        )
+    }
+
+    @Test fun editProfileLight() = capture("edit_profile_light") {
+        EditProfileScreen(
+            EditProfileUiState(profile = MyProfile(me, "Ada Lovelace", "ada.42", null)),
+            onBack = {},
+            onName = {},
+            onSaveName = {},
+            onNickname = {},
+            onClaim = {},
+            onClear = {},
+            onPickPhoto = {},
+        )
+    }
+
+    @Test fun newGroupLight() = capture("new_group_light") {
+        NewGroupScreen(
+            NewGroupUiState(
+                name = "Climbing Saturday",
+                contacts = listOf(
+                    contact(1, "Maya Chen", TrustState.Verified),
+                    contact(2, "Amara Okafor"),
+                    contact(3, "Jonas Weber"),
+                ),
+                selected = setOf(UserId("00000000-0000-0000-0000-000000000001")),
+            ),
+            onBack = {},
+            onName = {},
+            onToggle = {},
+            onCreate = {},
+        )
+    }
+
+    @Test fun groupInfoLight() = capture("group_info_light") {
+        GroupInfoScreen(
+            GroupInfoUiState(
+                group = Group(
+                    GroupId("11111111-1111-4111-8111-111111111111"),
+                    "Climbing Saturday",
+                    null,
+                    listOf(
+                        GroupMember(me, "Ada Lovelace", GroupRole.Admin, isMe = true),
+                        GroupMember(UserId("00000000-0000-0000-0000-000000000001"), "Maya Chen", GroupRole.Member),
+                        GroupMember(
+                            UserId("00000000-0000-0000-0000-000000000002"),
+                            "Jonas Weber",
+                            GroupRole.Member,
+                            invited = true,
+                        ),
+                    ),
+                    GroupStatus.Active,
+                ),
+                loading = false,
+            ),
+            onBack = {},
+        )
+    }
+
+    @Test fun searchLight() = capture("search_light") {
+        SearchScreen(
+            SearchUiState(
+                "rope",
+                listOf(
+                    SearchHit(
+                        ConversationId("1"),
+                        "Maya Chen",
+                        msg("2", "Yes. Leaving at 7, I'll bring the rope.", true, 7),
+                        UserId("00000000-0000-0000-0000-000000000001"),
+                        null,
+                    ),
+                ),
+            ),
+            onBack = {},
+            onQuery = {},
+            onOpen = {},
+        )
+    }
 
     @Test fun emptyChatsLight() = capture("chats_empty_light") {
         ChatsScreen(ChatsUiState(content = ChatsContent.Empty), onOpenSettings = {}, onRetry = {})
