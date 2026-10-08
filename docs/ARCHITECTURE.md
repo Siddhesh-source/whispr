@@ -177,6 +177,31 @@ registered. It retries transient failures with exponential backoff (2 s up to
 user retries from the Chats screen. `TokenSource.bearerToken()` re-authenticates
 on demand when the token is within 30 s of expiry.
 
+The server closes a WebSocket with status 4001 when the token it was opened
+with expires or is revoked (`POST /v1/auth/logout`, account deletion). The
+engine treats 4001 as "sign in again": it drops the token and reconnects at
+once, without backoff. Envelopes are durable and the outbox resends
+unacknowledged sends, so nothing is lost.
+
+### Deleting the account
+
+`DELETE /v1/me` needs the bearer token and a fresh challenge signed over
+`"whispr-delete-v1" 0x00 || user_id || nonce`. Postgres cascades the delete
+to keys, tokens, envelopes, the push token and the username. On the phone,
+`SessionAuthRepository.deleteAccount` runs the server delete first and only
+then `DeviceWipe`: close and delete the database, delete
+`noBackupFilesDir/{secrets,media,avatar}` and the cache, and delete both
+Keystore aliases. The app then restarts into onboarding.
+
+### Transport policy
+
+`TlsPolicy` configures the one OkHttp client used for HTTP and the
+WebSocket: TLS 1.2+ with modern suites, plain HTTP only for a loopback debug
+server, and a `CertificatePinner` from `BuildConfig.CERT_PINS`. Release
+builds take `whispr.releaseServerUrl` and `whispr.certPins`; the
+`checkReleaseConfig` task fails a release build that lacks an HTTPS URL, two
+pins (or `whispr.allowUnpinned=true`) or a signing key.
+
 ## Local development
 
 ```sh
@@ -491,6 +516,59 @@ Design: `docs/designs/groups-and-media.md`. Threat model: `docs/THREAT_MODEL.md`
 | Live (real server + MinIO) | `LiveGroupsTest`: group, picture, removal; the raw stored blob holds no marker |
 | Device (emulator) | photos lose GPS, camera make and capture time; the SQLCipher file holds no group name or attachment key |
 | CI `e2e` | bucket copy scanned for the marker with the DB dump and traffic |
+
+## Message actions (beta)
+
+Design: `docs/designs/security-polish-release.md`.
+
+### Payloads
+
+All new actions are ordinary encrypted payloads, so the server cannot tell
+them apart:
+
+| Payload | Fields | Receiver rule |
+|---|---|---|
+| `text`, `media` | `q`, `qa` (quoted message and its author), `fwd`, `exp` (timer, s) | Quotes are resolved locally; `exp` fixes the message's timer |
+| `delete` | `target`, `ts`, `g`? | Only from the target's author, for that author's message, within 24 h (+1 h clock slack). The row becomes a tombstone; attachment file, reactions and notification go |
+| `timer` | `seconds`, `ts`, `g`? | 0–28 days. Newest `ts` wins. Groups: only via the group path from a member. Each change adds a notice |
+
+### Storage (Room v6, auto-migrated)
+
+`messages` gains `quoteId`, `quoteAuthor`, `forwarded`, `deleted`,
+`expiresIn` and `expireAt`; `conversation_settings` holds each
+conversation's timer and the time of its last change.
+
+- **Disappearing messages.** Outgoing messages start their clock when sent;
+  incoming ones when read (`markRead` sets `expireAt`). The engine sweeps
+  expired rows on start and every minute, deleting attachments, reactions
+  and blob files, and emits `removed` so the notifier cancels the
+  conversation's notification.
+- **Forward.** Text is re-sent as a new message with `fwd`. Media is
+  decrypted in memory and sealed again under a fresh key and uploaded as a
+  new blob (`MediaService.forward`).
+- **Delete for me** removes the row (and its outbox entry if unsent).
+- **Search** is a `LIKE` query over `messages.body` inside the SQLCipher
+  database with `%`, `_` and `\` escaped, newest first, at most 100 hits;
+  placeholders, deleted rows and system notices are excluded. SQLite folds
+  ASCII case only.
+
+### UI
+
+A long press opens an action sheet: react, reply, copy (clip marked
+sensitive), forward, delete for me, delete for everyone (own messages within
+the window). The composer shows the reply being written; bubbles show the
+quote, a forwarded label and a timer icon. The chat bar has the timer menu;
+the chat list has search. Settings has Screen security (`FLAG_SECURE`, on by
+default) and Delete account.
+
+### Testing
+
+| Layer | What |
+|---|---|
+| Data (JVM, real libsignal, `FakeRelay`) | `MessageActionsTest`: replies, delete for everyone and forged deletes, delete for me, timers on both sides and from non-members, forwarded media, search escaping |
+| Data | `MessagingEngineTest.tokenExpiryCloseDropsTheTokenAndReconnects`; `TlsPolicyTest`; `SessionAuthRepositoryTest` delete flow; `AuthMessagesTest.deleteVector` |
+| App (Robolectric) | `MessageActionsUiTest`: action sheet, rendering, reply, timers, search, settings, delete confirmation |
+| Server | `security_test.go`, `revoke_test.go`, `server_test.go` route walk; `load_test.go` (opt-in) |
 
 ## Planned next (not built)
 

@@ -1,9 +1,11 @@
 # Whispr threat model
 
-Status: draft covering identity, registration, sign-in and local storage;
-1:1 messaging and push; QR contacts, verification and usernames; and
-end-to-end encryption with libsignal. Media gets its
-own section when built. "Gap" marks a known weakness we have accepted for now, each with a plan.
+Status: covers identity, registration, sign-in and local storage; 1:1
+messaging and push; QR contacts, verification and usernames; end-to-end
+encryption with libsignal; groups and media; and the beta hardening (message
+actions, session revocation, account deletion, certificate pinning). The
+ranked findings for the beta are in `docs/SECURITY_REVIEW.md`; retention
+periods in `docs/DATA_RETENTION.md`. "Gap" marks a known weakness we have accepted for now, each with a plan.
 
 ## Assets
 
@@ -64,7 +66,8 @@ relay data and keep the minimal metadata it needs.
 | Registering someone else's key | Registration must be signed by the key's private half | Done |
 | Stolen database yields sessions | Only SHA-256 of random 256-bit tokens is stored | Done |
 | Token theft from device storage or backups | Token is never written to disk | Done |
-| Stolen token reused | 15 min lifetime; bearer over TLS | Done (TLS: see Transport) |
+| Stolen token reused | 15 min lifetime; bearer over TLS; `POST /v1/auth/logout` revokes it; open WebSockets close (4001) when their token expires or is revoked | Done, tested |
+| Account deleted with a stolen token | `DELETE /v1/me` also needs a fresh challenge signed with the delete-only label `whispr-delete-v1` | Done, tested |
 | Signature-check bugs | Verification is libsignal (via FFI), not our code; malformed keys are rejected; a server built without libsignal refuses to start | Done |
 | Error oracle | All sign-in failures return the same `401 auth_failed` | Done |
 | User enumeration via challenge | `404 unknown_user` reveals whether a random UUID exists | **Gap (low)**: UUIDv4 IDs are unguessable and are shared by QR anyway; revisit if IDs become discoverable |
@@ -79,7 +82,8 @@ relay data and keep the minimal metadata it needs.
 | Database read from disk | SQLCipher; test asserts there is no SQLite header and no plaintext in the file | Done, tested on device |
 | Use of the app on an unlocked, stolen phone | Keystore keys are **not** bound to user authentication, so the app works without a separate unlock | **Gap**: optional app lock (biometric/PIN) planned; binding keys to auth would break background message delivery |
 | Private key in process memory | Unavoidable while signing; cached for the process lifetime | Accepted (root attacker is out of scope) |
-| Screenshots or recents thumbnails | Not yet protected | **Gap**: offer a FLAG_SECURE "screen security" setting before messaging ships |
+| Screenshots or recents thumbnails | `FLAG_SECURE` from the first frame, following the Screen security setting (on by default) | Done |
+| Data left behind after leaving | Account deletion erases the database, wrapped keys, their Keystore entries, media and caches, after the server confirms | Done, tested |
 | Keyboard learning typed messages | Compose has no API for `IME_FLAG_NO_PERSONALIZED_LEARNING` | **Gap**: add via a platform text-field interop when messaging ships |
 | Avatar leaking location | Re-encoded on import, which strips EXIF | Done |
 
@@ -87,8 +91,8 @@ relay data and keep the minimal metadata it needs.
 
 | Threat | Mitigation | Status |
 |--------|------------|--------|
-| Eavesdropping or modification | Release builds allow HTTPS only, system CAs only (user-installed CAs not trusted) | Config done; **no production endpoint yet** |
-| Rogue CA / TLS interception | Certificate pinning | **Planned** with the production deployment |
+| Eavesdropping or modification | HTTPS only in release (system CAs, no user CAs); TLS 1.2+ with modern suites; the release build refuses a non-HTTPS server URL | Done, tested |
+| Rogue CA / TLS interception | SPKI pinning, at least two pins (live and backup); a release build without pins fails unless `whispr.allowUnpinned=true` is passed deliberately | Done, tested (`TlsPolicyTest`) |
 | Dev cleartext leaking to release | Cleartext allowed only in the *debug* network config, and only for loopback | Done |
 
 The confidentiality of *messages* will not depend on TLS: libsignal end-to-end
@@ -117,7 +121,8 @@ encryption protects content even from a server or network that defeats TLS.
 
 | Threat | Mitigation | Status |
 |--------|------------|--------|
-| Mass account creation (no phone number to limit it) | Per-IP rate limit on auth endpoints (30/min) | **Gap**: in-memory and per-instance; IPs are cheap. Evaluate proof-of-work or anonymous rate-limit tokens before public launch |
+| Mass account creation (no phone number to limit it) | Per-IP limits: 30/min on auth endpoints, 10/hour on registration; client IPs resolved through `TRUSTED_PROXIES` so the limits work behind the TLS proxy | **Gap**: in-memory and per-instance; IPs are cheap. Proof-of-work or anonymous rate-limit tokens are on the roadmap |
+| Authenticated API abuse | 120 requests/min per user on every authenticated route, plus per-route limits | Done, tested |
 | Challenge-table flooding | Rate limit, 60 s TTL, periodic janitor | Done |
 
 ### Supply chain
@@ -152,7 +157,7 @@ encryption protects content even from a server or network that defeats TLS.
 | Replay or duplicate delivery | Server dedup tombstones; device unique message IDs; ack only after the database commit | Done, tested (server and device) |
 | Message loss on crash or restart | "Sent" means committed in Postgres; outbox persisted on device; envelope deleted only after ack | Done, tested (incl. server restart, killed recipient) |
 | Reordering | Per-recipient advisory lock and sequence-ordered streaming; one-in-flight outbox | Done, tested (concurrent senders) |
-| Flooding a recipient or the server | 20 sends/s per connection, 64 KiB payload cap, 30-day retention | Partial: per-connection only; no per-recipient quota yet |
+| Flooding a recipient or the server | 20 sends/s per connection, 64 KiB payload cap, 30-day retention, at most 1,000 undelivered envelopes per sender and recipient (`recipient_full`) | Done, tested |
 | Ghost connections hiding offline users | Heartbeat; offline marked before the close handshake | Done, tested |
 | Push revealing content | Data-only `{"t":"wake"}`; no content, sender, or conversation | Done, tested |
 | Push metadata to Google | FCM learns wake-up timing per device; Firebase Installations issues an ID. Delivery-metrics telemetry (datatransport) excluded from the build | Accepted; UnifiedPush can be added behind the same interface |
@@ -192,9 +197,10 @@ encryption protects content even from a server or network that defeats TLS.
 1. Display names are stored in plaintext on the server.
 2. Losing the device means losing the identity. There is no backup or recovery,
    by design for now; a recovery design must not hand the server key material.
-3. No app lock, no screen-security flag, no incognito keyboard flag yet.
+3. No app lock and no incognito keyboard flag yet (screen security is done).
 4. Spam resistance is weak (IP rate limit only).
-5. No production TLS endpoint or certificate pinning yet.
+5. Certificate pinning is done; pins must be rotated together with an app
+   release (`docs/DEPLOYMENT.md`).
 6. Usernames and server-looked-up contacts start on trust-on-first-use; only
    safety-number verification proves the key.
 
@@ -303,6 +309,32 @@ reactions, attachment keys or attachment contents.
   become "couldn't be recovered" placeholders.
 - No read receipts or typing indicators in groups.
 - Attachment sizes are not padded.
+
+## Message actions, sessions and accounts (beta)
+
+Design: `docs/designs/security-polish-release.md`.
+
+### What the server learns
+
+Nothing new about content. Replies, forwards, deletes, timer changes and
+reactions are ordinary encrypted payloads; the server cannot tell them from
+text messages except by size. New server-side state: none beyond the
+logout and deletion requests themselves.
+
+### Threats and mitigations
+
+| Threat | Mitigation | Status |
+|---|---|---|
+| Someone deletes another person's message "for everyone" | Receivers apply a delete only from the target's author (the authenticated sender), only for messages from that author, within 24 hours (+1 h clock slack) | Done, tested (forged delete ignored) |
+| A resend resurrects a deleted message | Deleted rows are tombstones; placeholder recovery skips them | Done |
+| Disappearing-message timer changed by an outsider | A group timer is applied only from the group's sender-key path by a member; the newest change wins; every change shows as a notice | Done, tested |
+| Disappearing messages kept by the recipient | Cooperating apps delete them (from send for ours, from read for theirs) along with attachments, reactions and notifications; a recipient can always photograph the screen | By design; documented |
+| Forwarded media links two conversations | Forwarding decrypts and re-encrypts under a fresh key and uploads a new blob | Done, tested |
+| Quoted text leaks after deletion | Quotes are references resolved locally; a deleted original shows as "not found" | Done |
+| Search leaks queries | Search runs on the phone over the SQLCipher database; nothing is sent | Done |
+| Copied text in clipboard history or keyboard suggestions | The clip is marked sensitive | Done |
+| Tapjacking a security confirmation | Verify, key-change acknowledgement and delete account ignore touches while obscured | Done |
+| Rate limits shared by everyone behind the proxy | `TRUSTED_PROXIES`; `X-Forwarded-For` read only from them, rightmost untrusted hop | Done, tested |
 
 ## Review triggers
 
