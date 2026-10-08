@@ -7,6 +7,7 @@ import (
 	"net/netip"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"whispr/server/internal/platform/httpx"
@@ -36,6 +37,11 @@ type Config struct {
 	S3UseSSL                                       bool
 	// AttachmentRetention is how long encrypted blobs are kept (default 30 days).
 	AttachmentRetention time.Duration
+	// TURN relay for calls (coturn with use-auth-secret). Empty TURNSecret
+	// or TURNURLs disables it; calls then try direct connections only.
+	TURNSecret string
+	TURNURLs   []string
+	TURNTTL    time.Duration
 }
 
 // Load reads configuration from the environment. DATABASE_URL is required;
@@ -57,6 +63,9 @@ func Load() (Config, error) {
 		S3Bucket:              getenv("S3_BUCKET", "whispr-media"),
 		S3UseSSL:              os.Getenv("S3_USE_SSL") != "false",
 		AttachmentRetention:   30 * 24 * time.Hour,
+		TURNSecret:            os.Getenv("TURN_SECRET"),
+		TURNURLs:              splitList(os.Getenv("TURN_URLS")),
+		TURNTTL:               10 * time.Minute,
 	}
 	if c.DatabaseURL == "" {
 		return Config{}, errors.New("DATABASE_URL is required")
@@ -70,6 +79,15 @@ func Load() (Config, error) {
 	}
 	if c.S3Endpoint != "" && (c.S3AccessKey == "" || c.S3SecretKey == "") {
 		return Config{}, errors.New("S3_ACCESS_KEY and S3_SECRET_KEY are required with S3_ENDPOINT")
+	}
+	if c.TURNTTL, err = duration("TURN_TTL", c.TURNTTL); err != nil {
+		return Config{}, err
+	}
+	if (c.TURNSecret == "") != (len(c.TURNURLs) == 0) {
+		return Config{}, errors.New("TURN_SECRET and TURN_URLS must be set together")
+	}
+	if c.TURNSecret != "" && len(c.TURNSecret) < 32 {
+		return Config{}, errors.New("TURN_SECRET must be at least 32 characters")
 	}
 	if c.ChallengeTTL, err = duration("CHALLENGE_TTL", c.ChallengeTTL); err != nil {
 		return Config{}, err
@@ -91,6 +109,17 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("TRUSTED_PROXIES: %w", err)
 	}
 	return c, nil
+}
+
+// splitList splits a comma-separated list, dropping blanks.
+func splitList(v string) []string {
+	var out []string
+	for _, s := range strings.Split(v, ",") {
+		if s = strings.TrimSpace(s); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 func getenv(key, def string) string {

@@ -69,3 +69,29 @@ func TestLoadMediaSettings(t *testing.T) {
 		t.Fatal("bad retention accepted")
 	}
 }
+
+func TestLoadTurnSettings(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://x")
+	t.Setenv("TURN_SECRET", "0123456789abcdef0123456789abcdef")
+	t.Setenv("TURN_URLS", " turn:relay:3478?transport=udp , ,turn:relay:3478?transport=tcp")
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.TURNURLs) != 2 || c.TURNURLs[0] != "turn:relay:3478?transport=udp" || c.TURNTTL != 10*time.Minute {
+		t.Fatalf("unexpected TURN config %+v", c.TURNURLs)
+	}
+	for name, env := range map[string][2]string{
+		"secret without urls": {"0123456789abcdef0123456789abcdef", ""},
+		"urls without secret": {"", "turn:relay"},
+		"short secret":        {"short", "turn:relay"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("TURN_SECRET", env[0])
+			t.Setenv("TURN_URLS", env[1])
+			if _, err := Load(); err == nil {
+				t.Fatal("accepted")
+			}
+		})
+	}
+}

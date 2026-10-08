@@ -15,6 +15,7 @@ import (
 
 	"whispr/server/internal/attachments"
 	"whispr/server/internal/auth"
+	"whispr/server/internal/calls"
 	"whispr/server/internal/config"
 	"whispr/server/internal/contacts"
 	"whispr/server/internal/keys"
@@ -130,6 +131,10 @@ func run() error {
 			// Username lookups get a stricter per-IP limit than other calls.
 			Profile:     profile.NewModule(profile.NewStore(pool), log, auth.UserIDFrom, httpx.NewRateLimiter(10).Middleware),
 			Attachments: media,
+			Calls: calls.NewModule(
+				calls.Options{Secret: cfg.TURNSecret, URLs: cfg.TURNURLs, TTL: cfg.TURNTTL},
+				auth.UserIDFrom,
+			),
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		MaxHeaderBytes:    16 << 10,

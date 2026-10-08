@@ -12,6 +12,7 @@ import (
 
 	"whispr/server/internal/attachments"
 	"whispr/server/internal/auth"
+	"whispr/server/internal/calls"
 	"whispr/server/internal/contacts"
 	"whispr/server/internal/health"
 	"whispr/server/internal/keys"
@@ -42,6 +43,8 @@ type Deps struct {
 	// Attachments is nil when object storage is not configured; uploads then
 	// answer 503 so clients show "media unavailable" instead of failing silently.
 	Attachments *attachments.Module
+	// Calls answers 503 for TURN credentials when no relay is configured.
+	Calls *calls.Module
 }
 
 func NewRouter(d Deps) http.Handler {
@@ -74,6 +77,9 @@ func NewRouter(d Deps) http.Handler {
 			d.Keys.Routes(r)
 			d.Push.Routes(r)
 			d.Profile.Routes(r)
+			if d.Calls != nil {
+				d.Calls.Routes(r)
+			}
 			if d.Attachments != nil {
 				d.Attachments.Routes(r)
 			} else {
