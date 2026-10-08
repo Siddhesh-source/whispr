@@ -253,7 +253,7 @@ private fun SettingsContent(
                             maxLines = 1,
                             overflow = TextOverflow.MiddleEllipsis,
                             modifier = Modifier.semantics {
-                                contentDescription = "${'$'}{accountIdLabel}: ${'$'}{state.userId}"
+                                contentDescription = "$accountIdLabel: ${state.userId}"
                             },
                         )
                     }

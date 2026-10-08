@@ -166,6 +166,8 @@ data class ConversationRow(
     val status: String?,
     val placeholder: String?,
     val unread: Int,
+    val attachmentKind: String? = null,
+    val attachmentType: String? = null,
 )
 
 @Dao
@@ -223,6 +225,8 @@ interface MessageDao {
         """
         SELECT c.userId AS peerId, c.displayName, c.identityKey, c.trust, c.isRequest,
                m.messageId, m.outgoing, m.body, m.timestamp, m.status, m.placeholder,
+               (SELECT kind FROM attachments a WHERE a.messageRow = m.localOrder) AS attachmentKind,
+               (SELECT contentType FROM attachments a WHERE a.messageRow = m.localOrder) AS attachmentType,
                (SELECT COUNT(*) FROM messages u
                  WHERE u.peerId = c.userId AND u.outgoing = 0 AND u.readByMe = 0
                    AND u.conversationId NOT IN (SELECT groupId FROM groups)) AS unread

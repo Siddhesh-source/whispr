@@ -67,7 +67,7 @@ class StatusCallsUiTest {
             WhisprTheme { StatusScreen(StatusUiState(loading = false, myName = "Me", myId = me), started::add, {}) }
         }
         rule.onNodeWithText("My status").assertIsDisplayed()
-        rule.onNodeWithText("Tap to add an update. It disappears after 24 hours.").assertIsDisplayed()
+        rule.onNodeWithText("Tap to add an update").assertIsDisplayed()
         rule.onNodeWithText("nobody is told when you view theirs", substring = true).assertIsDisplayed()
         rule.onNodeWithContentDescription("Photo status").performClick()
         rule.onNodeWithText("New status", useUnmergedTree = true).performClick()

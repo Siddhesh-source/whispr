@@ -95,6 +95,8 @@ fun MessageBubble(
     quote: QuotePreview? = null,
     forwarded: Boolean = false,
     expiring: Boolean = false,
+    /** What a screen reader says for [attachment] ("Photo", "GIF", a file name). */
+    attachmentLabel: String? = null,
 ) {
     val outgoing = direction == BubbleDirection.Outgoing
     val failed = outgoing && status == DeliveryStatus.Failed
@@ -115,14 +117,15 @@ fun MessageBubble(
     val forwardedLabel = stringResource(R.string.ds_forwarded)
     val quoteLabel = quote?.let { stringResource(R.string.ds_quote, it.author, it.text) }
     val expiringLabel = stringResource(R.string.ds_disappearing)
+    val said = listOfNotNull(attachmentLabel, text.ifEmpty { null }).joinToString(". ")
     val spoken = buildString {
         if (forwarded) append(forwardedLabel).append(". ")
         if (quoteLabel != null) append(quoteLabel).append(". ")
         append(
             if (outgoing) {
-                stringResource(R.string.ds_bubble_outgoing, time, text)
+                stringResource(R.string.ds_bubble_outgoing, time, said)
             } else {
-                stringResource(R.string.ds_bubble_incoming, listOfNotNull(senderName, time).joinToString(", "), text)
+                stringResource(R.string.ds_bubble_incoming, listOfNotNull(senderName, time).joinToString(", "), said)
             },
         )
         if (statusLabel != null) append(". ").append(statusLabel)

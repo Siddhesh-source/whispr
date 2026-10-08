@@ -73,14 +73,31 @@ fun MessageInputBar(
 ) {
     // State-based field: only it can receive keyboard content (commitContent).
     // [value] stays the source of truth; the two are kept in step.
+    // The field owns what is being typed. [value] arrives later as an echo of
+    // each edit; only a value we never sent (cleared after sending, a restored
+    // draft) is written back, or a late echo would erase newer keystrokes.
     val field = rememberTextFieldState(value)
-    val currentValue by rememberUpdatedState(value)
+    val sent = remember { ArrayDeque<String>() }
+    val lastEmitted = remember { arrayOf(value) }
     val currentOnChange by rememberUpdatedState(onValueChange)
     LaunchedEffect(value) {
-        if (field.text.toString() != value) field.setTextAndPlaceCursorAtEnd(value)
+        val echo = sent.indexOf(value)
+        if (echo >= 0) {
+            repeat(echo + 1) { sent.removeFirst() }
+        } else if (field.text.toString() != value) {
+            sent.clear()
+            lastEmitted[0] = value
+            field.setTextAndPlaceCursorAtEnd(value)
+        }
     }
     LaunchedEffect(field) {
-        snapshotFlow { field.text.toString() }.collect { if (it != currentValue) currentOnChange(it) }
+        snapshotFlow { field.text.toString() }.collect { text ->
+            if (text != lastEmitted[0]) {
+                lastEmitted[0] = text
+                sent.addLast(text)
+                currentOnChange(text)
+            }
+        }
     }
     val receiver = onReceiveImage?.let { receive ->
         Modifier.contentReceiver { content ->

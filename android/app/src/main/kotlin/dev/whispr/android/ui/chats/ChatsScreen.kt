@@ -194,6 +194,7 @@ private fun ConversationRow(item: ConversationSummary, onOpen: (ConversationSumm
     val last = item.lastMessage
     val body = when {
         last == null -> ""
+        last.attachment?.animated == true -> stringResource(R.string.chat_attachment_gif)
         last.attachment != null -> stringResource(last.attachment!!.kind.previewRes())
         else -> last.text
     }

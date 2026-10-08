@@ -715,6 +715,14 @@ private fun Bubble(
         onRetry = { onRetry(m.id) },
         notice = m.notice != null || m.deleted,
         attachment = attachment?.let { a -> { AttachmentView(m.id, a, attachments) } },
+        attachmentLabel = attachment?.let { a ->
+            when {
+                a.animated -> stringResource(R.string.chat_attachment_gif)
+                a.kind == AttachmentKind.Image -> stringResource(R.string.chat_attachment_photo)
+                a.kind == AttachmentKind.Voice -> stringResource(R.string.chat_attachment_voice)
+                else -> a.fileName ?: stringResource(R.string.chat_attachment_file)
+            }
+        },
         reactions = m.reactions.map { ReactionChip(it.emoji, it.count, it.mine) },
         onActions = if (m.notice == null) ({ onLongPress(m) }) else null,
         quote = m.quote?.takeIf { !m.deleted }?.let { quotePreview(it, peerName) },

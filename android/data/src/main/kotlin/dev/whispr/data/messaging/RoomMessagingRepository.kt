@@ -523,6 +523,15 @@ class RoomMessagingRepository(
                 timestamp = Instant.ofEpochMilli(timestamp ?: 0),
                 status = status?.let { s -> statusFor(s, showRead) },
                 notice = placeholder?.let { MessageNotice.valueOf(it) },
+                attachment = attachmentKind?.let { k ->
+                    Attachment(
+                        AttachmentKind.valueOf(k),
+                        attachmentType.orEmpty(),
+                        null,
+                        0,
+                        state = AttachmentState.Ready,
+                    )
+                },
             )
         },
         unreadCount = unread,
@@ -546,7 +555,13 @@ class RoomMessagingRepository(
                     author = peerId?.takeIf { outgoing != true && system != true }?.let(::UserId),
                     authorName = peerId?.takeIf { outgoing != true && system != true }?.let { p -> names[p] },
                     attachment = attachmentKind?.let { k ->
-                        Attachment(AttachmentKind.valueOf(k), "", null, 0, state = AttachmentState.Ready)
+                        Attachment(
+                            AttachmentKind.valueOf(k),
+                            attachmentType.orEmpty(),
+                            null,
+                            0,
+                            state = AttachmentState.Ready,
+                        )
                     },
                     system = system == true,
                 )

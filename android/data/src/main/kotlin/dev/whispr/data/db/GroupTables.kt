@@ -264,6 +264,7 @@ interface GroupQueries {
                m.messageId AS messageId, m.peerId AS peerId, m.outgoing AS outgoing, m.body AS body,
                m.timestamp AS timestamp, m.status AS msgStatus, m.placeholder AS placeholder, m.system AS system,
                (SELECT kind FROM attachments a WHERE a.messageRow = m.localOrder) AS attachmentKind,
+               (SELECT contentType FROM attachments a WHERE a.messageRow = m.localOrder) AS attachmentType,
                (SELECT COUNT(*) FROM messages u
                  WHERE u.conversationId = g.groupId AND u.outgoing = 0 AND u.readByMe = 0 AND u.system = 0) AS unread
         FROM groups g
@@ -290,5 +291,6 @@ data class GroupRow(
     val placeholder: String?,
     val system: Boolean?,
     val attachmentKind: String?,
+    val attachmentType: String? = null,
     val unread: Int,
 )
