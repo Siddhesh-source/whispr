@@ -11,9 +11,11 @@ import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -29,6 +31,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import dev.whispr.core.designsystem.R
+import dev.whispr.core.designsystem.icon.WhisprIcons
 import dev.whispr.core.designsystem.theme.WhisprTheme
 
 /**
@@ -47,6 +50,10 @@ fun ChatListRow(
     modifier: Modifier = Modifier,
     avatar: ImageBitmap? = null,
     unreadCount: Int = 0,
+    /** Shows the amber seal after the name: the safety number was compared. */
+    verified: Boolean = false,
+    /** The preview is a warning (e.g. safety number changed) and is shown in the danger color. */
+    alert: Boolean = false,
 ) {
     val unread = unreadCount > 0
     val unreadText = if (unread) {
@@ -66,24 +73,34 @@ fun ChatListRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         WhisprAvatar(name = name, image = avatar)
-        Spacer(Modifier.width(WhisprTheme.spacing.lg))
+        Spacer(Modifier.width(WhisprTheme.spacing.md + WhisprTheme.spacing.xxs))
         Column(Modifier.weight(1f).clearAndSetSemantics { }) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = name,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = if (unread) FontWeight.SemiBold else null,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
-                )
+                Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = name,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    if (verified) {
+                        Spacer(Modifier.width(WhisprTheme.spacing.xs))
+                        Icon(
+                            WhisprIcons.Verified,
+                            contentDescription = null,
+                            tint = WhisprTheme.colors.seal,
+                            modifier = Modifier.size(WhisprTheme.sizes.seal),
+                        )
+                    }
+                }
                 Spacer(Modifier.width(WhisprTheme.spacing.sm))
                 Text(
                     text = time,
-                    style = MaterialTheme.typography.labelMedium,
+                    style = MaterialTheme.typography.labelSmall,
                     color = if (unread) {
-                        MaterialTheme.colorScheme.primary
+                        MaterialTheme.colorScheme.onSurface
                     } else {
                         MaterialTheme.colorScheme.onSurfaceVariant
                     },
@@ -98,7 +115,7 @@ fun ChatListRow(
                 Text(
                     text = lastMessage,
                     style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = if (alert) WhisprTheme.colors.danger else MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
@@ -116,15 +133,25 @@ private fun UnreadBadge(count: Int) {
         modifier = Modifier
             .defaultMinSize(minWidth = WhisprTheme.sizes.unreadBadgeMin, minHeight = WhisprTheme.sizes.unreadBadgeMin)
             .background(colors.unreadBadge, CircleShape)
-            .padding(horizontal = WhisprTheme.spacing.xs),
+            .padding(horizontal = WhisprTheme.spacing.sm - WhisprTheme.spacing.xxs),
         contentAlignment = Alignment.Center,
     ) {
         Text(
             text = if (count > MAX_BADGE_COUNT) stringResource(R.string.ds_unread_overflow) else count.toString(),
-            style = MaterialTheme.typography.labelSmall,
+            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
             color = colors.onUnreadBadge,
         )
     }
+}
+
+/** The hairline between list rows; it starts at the text column, past the avatar. */
+@Composable
+fun ListDivider(modifier: Modifier = Modifier, inset: Boolean = true) {
+    HorizontalDivider(
+        modifier = modifier.padding(start = if (inset) WhisprTheme.sizes.listDividerInset else WhisprTheme.spacing.lg),
+        thickness = WhisprTheme.sizes.hairline,
+        color = WhisprTheme.colors.hairline,
+    )
 }
 
 private const val MAX_BADGE_COUNT = 99
@@ -134,10 +161,11 @@ private const val MAX_BADGE_COUNT = 99
 private fun ChatListRowPreview() {
     PreviewSurface {
         Column {
-            ChatListRow("Ada Lovelace", "See you at the lake on Saturday!", "10:42", onClick = {}, unreadCount = 2)
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-            ChatListRow("Grace Hopper", "Thanks, that worked.", "Yesterday", onClick = {})
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            ChatListRow("Ada Lovelace", "See you at the lake on Saturday!", "10:42", onClick = {
+            }, unreadCount = 2, verified = true)
+            ListDivider()
+            ChatListRow("Grace Hopper", "Safety number changed", "Yesterday", onClick = {}, alert = true)
+            ListDivider()
             ChatListRow(
                 "A very long display name that will not fit",
                 "A long message preview that should be truncated with an ellipsis",

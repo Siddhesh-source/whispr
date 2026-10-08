@@ -27,19 +27,27 @@ data class WhisprSizes(
     val iconSmall: Dp = 16.dp,
     val stateIllustration: Dp = 64.dp,
     val avatarSmall: Dp = 32.dp,
-    val avatarMedium: Dp = 48.dp,
+    val avatarMedium: Dp = 46.dp,
     val avatarLarge: Dp = 64.dp,
     val avatarXLarge: Dp = 112.dp,
     val chatRowMinHeight: Dp = 72.dp,
-    val unreadBadgeMin: Dp = 20.dp,
+    val unreadBadgeMin: Dp = 22.dp,
+    /** The amber verified seal after a contact's name. */
+    val seal: Dp = 15.dp,
+    /** Hairline dividers and borders. */
+    val hairline: Dp = 1.dp,
+    /** List dividers start at the text column: gutter + avatar + gap. */
+    val listDividerInset: Dp = 76.dp,
+    val sendButton: Dp = 44.dp,
+    val buttonHeight: Dp = 52.dp,
     val inputBarMinHeight: Dp = 56.dp,
     val primaryButtonHeight: Dp = 56.dp,
     val progressStroke: Dp = 3.dp,
     val progressSmall: Dp = 20.dp,
     /** Keeps line length readable on tablets and foldables. */
-    val contentMaxWidth: Dp = 600.dp,
+    val contentMaxWidth: Dp = 640.dp,
     /** Bubbles never exceed this fraction of the available width. */
-    val bubbleMaxWidthFraction: Float = 0.8f,
+    val bubbleMaxWidthFraction: Float = 0.78f,
     /** Largest side of an image preview inside a bubble. */
     val mediaPreviewMax: Dp = 240.dp,
 )

@@ -26,7 +26,7 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.SavedStateHandle
@@ -45,6 +45,7 @@ import dev.whispr.core.designsystem.component.QrCodeImage
 import dev.whispr.core.designsystem.component.WhisprPrimaryButton
 import dev.whispr.core.designsystem.component.WhisprTopBar
 import dev.whispr.core.designsystem.icon.WhisprIcons
+import dev.whispr.core.designsystem.theme.WhisprFonts
 import dev.whispr.core.designsystem.theme.WhisprTheme
 import dev.whispr.domain.model.SafetyNumber
 import dev.whispr.domain.model.TrustState
@@ -188,13 +189,13 @@ private fun ReadyContent(
                 Icon(
                     WhisprIcons.Verified,
                     contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
+                    tint = WhisprTheme.colors.seal,
                     modifier = Modifier.size(WhisprTheme.sizes.icon),
                 )
                 Text(
                     stringResource(R.string.verify_verified),
                     style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.primary,
+                    color = MaterialTheme.colorScheme.onSurface,
                 )
             }
         }
@@ -255,7 +256,10 @@ private fun SafetyDigits(digits: String) {
         groups.chunked(PER_ROW).forEach { row ->
             Text(
                 row.joinToString("   "),
-                style = MaterialTheme.typography.titleLarge.copy(fontFamily = FontFamily.Monospace),
+                style = MaterialTheme.typography.titleLarge.copy(
+                    fontFamily = WhisprFonts.Mono,
+                    fontWeight = FontWeight.Normal,
+                ),
                 color = MaterialTheme.colorScheme.onSurface,
             )
         }

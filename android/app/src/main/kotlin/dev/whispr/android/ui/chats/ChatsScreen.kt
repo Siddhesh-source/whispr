@@ -10,9 +10,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.ExtendedFloatingActionButton
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -37,6 +36,7 @@ import dev.whispr.android.ui.formatTimestamp
 import dev.whispr.core.designsystem.component.ChatListRow
 import dev.whispr.core.designsystem.component.EmptyState
 import dev.whispr.core.designsystem.component.ErrorState
+import dev.whispr.core.designsystem.component.ListDivider
 import dev.whispr.core.designsystem.component.LoadingState
 import dev.whispr.core.designsystem.component.OfflineBanner
 import dev.whispr.core.designsystem.component.WhisprPrimaryButton
@@ -94,6 +94,7 @@ fun ChatsScreen(
         topBar = {
             WhisprTopBar(
                 title = stringResource(R.string.chats_title),
+                large = true,
                 actions = {
                     if (state.content is ChatsContent.Conversations) {
                         IconButton(onClick = onSearch) {
@@ -117,6 +118,9 @@ fun ChatsScreen(
             if (state.content is ChatsContent.Conversations) {
                 ExtendedFloatingActionButton(
                     onClick = onNewChat,
+                    shape = MaterialTheme.shapes.medium,
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary,
                     icon = { Icon(WhisprIcons.PersonAdd, contentDescription = null) },
                     text = { Text(newChat) },
                 )
@@ -162,22 +166,31 @@ private fun ConversationList(items: List<ConversationSummary>, onOpen: (Conversa
             item(key = "requests-header") {
                 Text(
                     stringResource(R.string.chats_requests),
-                    style = MaterialTheme.typography.titleSmall,
-                    color = MaterialTheme.colorScheme.primary,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier
-                        .padding(horizontal = WhisprTheme.spacing.lg, vertical = WhisprTheme.spacing.sm)
+                        .padding(
+                            start = WhisprTheme.spacing.lg,
+                            end = WhisprTheme.spacing.lg,
+                            top = WhisprTheme.spacing.md,
+                            bottom = WhisprTheme.spacing.xs,
+                        )
                         .semantics { heading() },
                 )
             }
-            items(requests, key = { "r-" + it.id.value }) { ConversationRow(it, onOpen) }
-            item(key = "requests-divider") { HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant) }
+            itemsIndexed(requests, key = { _, it -> "r-" + it.id.value }) { i, it ->
+                ConversationRow(it, onOpen, divider = i < requests.lastIndex)
+            }
+            item(key = "requests-divider") { ListDivider(inset = false) }
         }
-        items(chats, key = { it.id.value }) { ConversationRow(it, onOpen) }
+        itemsIndexed(chats, key = { _, it -> it.id.value }) { i, it ->
+            ConversationRow(it, onOpen, divider = i < chats.lastIndex)
+        }
     }
 }
 
 @Composable
-private fun ConversationRow(item: ConversationSummary, onOpen: (ConversationSummary) -> Unit) {
+private fun ConversationRow(item: ConversationSummary, onOpen: (ConversationSummary) -> Unit, divider: Boolean) {
     val last = item.lastMessage
     val body = when {
         last == null -> ""
@@ -201,8 +214,10 @@ private fun ConversationRow(item: ConversationSummary, onOpen: (ConversationSumm
         time = last?.let { formatTimestamp(it.timestamp) }.orEmpty(),
         onClick = { onOpen(item) },
         unreadCount = item.unreadCount,
+        verified = item.peer?.trust == TrustState.Verified,
+        alert = item.peer?.trust == TrustState.KeyChanged,
     )
-    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+    if (divider) ListDivider()
 }
 
 internal fun AttachmentKind.previewRes() = when (this) {

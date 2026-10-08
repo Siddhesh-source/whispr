@@ -64,7 +64,7 @@ private fun StateLayout(
             )
             Text(
                 text = title,
-                style = MaterialTheme.typography.titleLarge,
+                style = MaterialTheme.typography.headlineMedium,
                 color = MaterialTheme.colorScheme.onSurface,
                 textAlign = TextAlign.Center,
                 modifier = Modifier.semantics { heading() },
@@ -96,7 +96,7 @@ fun EmptyState(
         title = title,
         message = message,
         modifier = modifier,
-        iconTint = MaterialTheme.colorScheme.primary,
+        iconTint = WhisprTheme.colors.faint,
         liveRegion = false,
         action = action,
     )

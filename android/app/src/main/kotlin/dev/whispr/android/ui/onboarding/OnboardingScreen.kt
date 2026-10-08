@@ -97,7 +97,7 @@ fun OnboardingScreen(
                 ) {
                     Text(
                         stringResource(R.string.onboarding_title),
-                        style = MaterialTheme.typography.headlineSmall,
+                        style = MaterialTheme.typography.displaySmall,
                         color = MaterialTheme.colorScheme.onSurface,
                         textAlign = TextAlign.Center,
                         modifier = Modifier.semantics { heading() },

@@ -123,7 +123,8 @@ class ScreensTest {
     fun settingsContentOffline() {
         settings(SettingsUiState.Content("Ada", null, "user-123", ConnectionStatus.Offline, "0.1.0"))
         rule.onNodeWithText("user-123").assertExists() // below the fold on the small test screen
-        rule.onNodeWithText("Offline").assertIsDisplayed()
+        // Connection status sits in the About group, below the fold on the small test screen.
+        rule.onNodeWithText("Offline").assertExists()
         rule.onNodeWithContentDescription("Navigate back").assertIsDisplayed()
     }
 

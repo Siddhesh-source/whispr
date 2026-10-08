@@ -1,37 +1,42 @@
 ---
 # gstack: design-md-format=spec
 name: Whispr
-description: Quiet confidence. Near-monochrome, precise and calm; color appears only when it means trust, attention or danger.
+description: Quiet confidence in mint and moss. Calm green surfaces, precise type, and an amber seal that only ever means trust or attention.
 colors:
-  fog: "#F4F5F3"
+  ground: "#F2F5EF"
   surface: "#FFFFFF"
-  sunken: "#ECEEEB"
-  ink: "#14181A"
-  text-muted: "#5D6562"
-  text-faint: "#8A928E"
-  hairline: "#DDE1DD"
+  sunken: "#E7ECE4"
+  ink: "#16201A"
+  text-muted: "#5D6A60"
+  text-faint: "#77847B"
+  hairline: "#DDE4D8"
+  primary: "#2C6E49"
+  on-primary: "#F2F8F3"
+  bubble-out: "#CDEBD8"
+  on-bubble-out: "#102A1C"
+  meta-out: "#486B58"
+  read-tick: "#237A4E"
+  bubble-in: "#FFFFFF"
   seal: "#C4851F"
   seal-soft: "#F6ECD9"
-  on-seal: "#14181A"
-  danger: "#C23F2B"
+  on-seal: "#16201A"
+  danger: "#B83A27"
   danger-soft: "#F8E3DF"
-  bubble-out: "#14181A"
-  on-bubble-out: "#F4F5F3"
-  bubble-in: "#FFFFFF"
-  dark-fog: "#0D1011"
-  dark-surface: "#161A1C"
-  dark-sunken: "#1D2224"
-  dark-ink: "#E9ECEA"
-  dark-text-muted: "#9AA39F"
-  dark-text-faint: "#6E7773"
-  dark-hairline: "#262C2E"
+  dark-ground: "#0F1410"
+  dark-surface: "#161D18"
+  dark-sunken: "#1B241E"
+  dark-ink: "#E5ECE6"
+  dark-text-muted: "#95A49A"
+  dark-hairline: "#26302A"
+  dark-primary: "#86D7A8"
+  dark-on-primary: "#0C1A11"
+  dark-bubble-out: "#244D36"
+  dark-on-bubble-out: "#E8F5EC"
+  dark-meta-out: "#A3C7B1"
+  dark-read-tick: "#86E0AE"
+  dark-bubble-in: "#1B241E"
   dark-seal: "#E2A447"
-  dark-seal-soft: "#2E2516"
   dark-danger: "#EE7A66"
-  dark-danger-soft: "#3A1E19"
-  dark-bubble-out: "#E3E7E4"
-  dark-on-bubble-out: "#111416"
-  dark-bubble-in: "#1D2224"
 typography:
   display:
     fontFamily: Bricolage Grotesque
@@ -70,8 +75,8 @@ spacing:
   2xl: 32px
 components:
   button-primary:
-    backgroundColor: "{colors.ink}"
-    textColor: "{colors.fog}"
+    backgroundColor: "{colors.primary}"
+    textColor: "{colors.on-primary}"
     rounded: "{rounded.md}"
   button-secondary:
     backgroundColor: "{colors.surface}"
@@ -104,9 +109,9 @@ components:
 
 ## Overview
 
-**Creative North Star:** quiet confidence. A private messenger that feels calm,
-crafted and adult: near-monochrome surfaces, one disciplined typeface, and color
-spent only on meaning.
+**Creative North Star:** quiet confidence in mint and moss. A private
+messenger that feels calm, crafted and adult: soft green surfaces, one
+disciplined typeface, and an amber seal spent only on meaning.
 **Product context:** Whispr, an end-to-end encrypted Android messenger with no
 phone number, for people who want privacy without ceremony. Peers: Signal,
 Threema, Wire, Session.
@@ -115,31 +120,31 @@ Threema, Wire, Session.
 **Reference sites:** signal.org, threema.com, wire.com, getsession.org
 (category), linear.app (restraint and craft).
 **Key characteristics:**
-- Ink and fog, not a brand color, carry the interface.
-- The amber seal is the only accent and always means trust or attention.
-- Flat lists divided by hairlines; no stacked cards.
-- Large, narrow Bricolage Grotesque titles give each screen a voice.
-- Keys and numbers are set in mono so they read as data.
+- Your messages sit in mint bubbles; theirs in white with a hairline.
+- Moss green carries actions: buttons, send, switches, the new-chat button.
+- The amber seal marks verified contacts and unread counts, nothing else.
+- Flat lists divided by inset hairlines; settings in quiet grouped panels.
+- Large, narrow Bricolage Grotesque titles; keys and IDs in mono.
 
 ## Colors
 
-**Strategy:** Restrained. Neutrals do the work; one accent (seal amber) marks
-verified contacts, unread counts and the onboarding mark; danger red marks key
-changes, failed sends and destructive actions. Nothing else is colored.
-Competitors each own a loud hue (Signal blue, Wire blue, Session green); Whispr
-owns the absence of one.
+**Strategy:** Committed, softly. Green owns the product (mint for your side of
+the conversation, moss for actions), neutrals are tinted toward it, amber is
+the one accent for trust and attention, and red is reserved for danger. Mint
+and moss were chosen over a deep "evergreen" bubble and over sage: the
+friendliest of the three while staying calm (variants in
+`~/.gstack/projects/Siddhesh-source-whispr/designs/`).
 
-**Light or dark:** both, following the system setting. Phones are used in
-daylight and at night in bed; neither is the "real" theme.
+**Light or dark:** both, following the system setting.
 
-- `ink` is text, the primary button and your own message bubbles.
-- `fog` is the ground; `surface` lifts sheets, groups and incoming bubbles;
-  `sunken` fills inputs, search and avatars.
-- `hairline` draws dividers and 1px borders; it replaces shadows on most
-  surfaces.
-- Dark mode is not an inversion: grounds step up in lightness (`dark-fog` →
-  `dark-surface` → `dark-sunken`) so hierarchy survives, and outgoing bubbles
-  flip to a pale ink so your messages stay the strongest element.
+- `primary` (moss) is the primary button, send, switches, focus and the
+  new-chat button. Dark mode uses a light mint-green primary on near-black.
+- `bubble-out` (mint) holds your messages; `meta-out` is their time and ticks;
+  `read-tick` marks a read message.
+- `ground` is the background; `surface` lifts incoming bubbles, settings groups
+  and the composer; `sunken` fills avatars and disabled controls.
+- `hairline` draws dividers and 1px borders instead of shadows.
+- `seal` (amber) is the verified seal and the unread badge, nothing else.
 - QR codes stay black on white in both themes for reliable scanning.
 
 ## Typography
@@ -171,7 +176,7 @@ body 14.5 / meta 12.5. Levels differ by size and weight, never weight alone.
 
 ## Elevation & Depth
 
-Flat by default. Depth comes from the fog → surface → sunken steps and 1px
+Flat by default. Depth comes from the ground → surface → sunken steps and 1px
 hairlines. The only shadow is on transient layers (bottom sheets, menus,
 dialogs): a soft, offset shadow, never a glow.
 
@@ -184,12 +189,25 @@ badges). No pill-shaped buttons. Nested radius = outer radius − gap.
 
 ## Components
 
-- **Buttons:** primary is solid ink, 12dp radius, 600 weight; secondary is
+- **Buttons:** primary is solid moss, 12dp radius, 600 weight; secondary is
   surface with a hairline border. Pressed state darkens 8%; disabled drops to
   38% content alpha. Focus shows a 2dp ink outline offset 2dp.
-- **Bubbles:** outgoing ink, incoming surface with hairline border, 18dp radius
-  with a 6dp tail corner at the end of a run. Time and ticks inside, at 62%
-  alpha. Failed sends use `danger-soft` with danger text.
+- **Bubbles:** outgoing mint, incoming surface with a hairline border, 18dp
+  radius with a 6dp tail corner at the end of a run. Failed sends use
+  `danger-soft` with danger text.
+- **Time and ticks:** one group, always at the bottom end of the bubble: timer
+  icon (disappearing messages only), time in tabular figures, then the tick
+  (one for sent, two for delivered, two in `read-tick` once read), all 15dp
+  and evenly spaced. The group sits after the last line when it fits there,
+  otherwise on its own line, flush right. Never on a line of its own when it
+  fits inline.
+- **Conversation header:** back, the contact's name with the seal when
+  verified, the timer menu and the verify action. No status strip.
+- **Disappearing strip:** shown only while a timer is on (off by default), one
+  muted line under the header: timer icon and "Messages disappear after
+  [time]". Nothing about verification.
+- **Composer:** one bordered bar (16dp radius) holding attach, the field, the
+  mic while empty, and the square send button.
 - **Verified seal:** a 15dp amber seal glyph after the contact name. It appears
   only when the safety number has been compared.
 - **Unread badge:** amber with ink text. It is the only colored element in a
@@ -201,17 +219,18 @@ badges). No pill-shaped buttons. Nested radius = outer radius − gap.
 
 ## Do's and Don'ts
 
-- Do keep every screen near-monochrome; check that color appears only for seal,
-  badge or danger.
+- Do keep green to bubbles and actions, amber to seal and badge, red to danger.
 - Do separate list items with inset hairlines, not cards.
 - Do set identifiers (safety numbers, IDs) in JetBrains Mono.
 - Do take every color, size and radius from `WhisprTheme`; `checkDesignTokens`
   fails the build on literals.
-- Don't color outgoing bubbles with an accent.
+- Don't show a verification or status strip in the conversation; the seal
+  next to the name is the signal.
 - Don't add icons in colored circles, gradients, glows or illustrations.
 - Don't use Bricolage Grotesque below 22sp or for body text.
 - Don't use pill-shaped buttons or a uniform large radius on everything.
 - Don't use amber for anything that isn't trust or attention.
+- Don't draw ticks as text glyphs; use the tick icons in the meta group.
 
 ## Motion
 
@@ -225,4 +244,5 @@ badges). No pill-shaped buttons. Nested radius = outer radius − gap.
 ## Decisions Log
 | Date | Decision | Rationale |
 |------|----------|-----------|
+| 2026-10-08 | Mint & moss palette (variant C), conversation layout B without the trust strip, uniform time/tick group | User review of light/dark variants: black-and-white read too stark; verification strip removed, disappearing strip only when a timer is set |
 | 2026-10-08 | Initial design system created | /design-consultation: "quiet confidence"; research on signal.org, threema.com, wire.com, getsession.org and linear.app showed every messenger owns a loud hue, so Whispr is near-monochrome with one trust accent |

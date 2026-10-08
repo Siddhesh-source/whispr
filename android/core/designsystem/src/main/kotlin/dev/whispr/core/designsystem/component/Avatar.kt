@@ -81,14 +81,17 @@ fun WhisprAvatar(
             Text(
                 text = initials,
                 color = foreground,
-                style = MaterialTheme.typography.titleMedium.copy(fontSize = fontSize, fontWeight = FontWeight.Medium),
+                style = MaterialTheme.typography.titleMedium.copy(
+                    fontSize = fontSize,
+                    fontWeight = FontWeight.SemiBold,
+                ),
                 maxLines = 1,
             )
         }
     }
 }
 
-private const val INITIALS_SIZE_RATIO = 0.4f
+private const val INITIALS_SIZE_RATIO = 0.36f
 private const val PLACEHOLDER_ICON_RATIO = 0.5f
 
 /** Up to two user-perceived characters (grapheme clusters), from the first two words. */

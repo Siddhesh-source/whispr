@@ -16,7 +16,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -84,9 +83,10 @@ fun WarningCard(
     secondaryLabel: String? = null,
     onSecondary: (() -> Unit)? = null,
 ) {
+    val colors = WhisprTheme.colors
     Surface(
-        color = MaterialTheme.colorScheme.errorContainer,
-        contentColor = MaterialTheme.colorScheme.onErrorContainer,
+        color = colors.dangerSoft,
+        contentColor = MaterialTheme.colorScheme.onSurface,
         shape = MaterialTheme.shapes.large,
         modifier = modifier.fillMaxWidth().semantics(mergeDescendants = false) { liveRegion = LiveRegionMode.Polite },
     ) {
@@ -98,19 +98,29 @@ fun WarningCard(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(WhisprTheme.spacing.sm),
             ) {
-                Icon(WhisprIcons.Warning, contentDescription = null, modifier = Modifier.size(WhisprTheme.sizes.icon))
-                Text(title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() })
+                Icon(
+                    WhisprIcons.Warning,
+                    contentDescription = null,
+                    tint = colors.danger,
+                    modifier = Modifier.size(WhisprTheme.sizes.icon),
+                )
+                Text(
+                    title,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = colors.danger,
+                    modifier = Modifier.semantics { heading() },
+                )
             }
-            Text(message, style = MaterialTheme.typography.bodyMedium)
+            Text(message, style = MaterialTheme.typography.bodyMedium, color = colors.onDangerSoft)
             Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End,
+                Modifier.fillMaxWidth().padding(top = WhisprTheme.spacing.xs),
+                horizontalArrangement = Arrangement.spacedBy(WhisprTheme.spacing.sm),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                if (secondaryLabel != null && onSecondary != null) {
-                    TextButton(onClick = onSecondary) { Text(secondaryLabel) }
-                }
                 WhisprPrimaryButton(text = primaryLabel, onClick = onPrimary, fillWidth = false)
+                if (secondaryLabel != null && onSecondary != null) {
+                    WhisprSecondaryButton(text = secondaryLabel, onClick = onSecondary)
+                }
             }
         }
     }

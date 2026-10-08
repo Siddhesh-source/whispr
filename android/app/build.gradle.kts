@@ -6,6 +6,7 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.ksp)
     alias(libs.plugins.hilt)
+    alias(libs.plugins.roborazzi)
 }
 
 // The debug build talks to the local docker-compose backend through
@@ -35,6 +36,10 @@ val keystoreProps = Properties().apply {
 fun signingValue(env: String, prop: String): String? =
     providers.environmentVariable(env).orNull?.takeIf { it.isNotEmpty() } ?: keystoreProps.getProperty(prop)
 val keystoreFile = signingValue("WHISPR_KEYSTORE_FILE", "storeFile")
+
+// Screen screenshots run only with -Pwhispr.screenshots or a Roborazzi task.
+val runScreenshots = providers.gradleProperty("whispr.screenshots").isPresent ||
+    gradle.startParameter.taskNames.any { it.contains("roborazzi", ignoreCase = true) }
 
 // Firebase (push) is optional. Without these values the app builds and runs
 // with push disabled. Put them in android/firebase.properties (git-ignored),
@@ -112,6 +117,10 @@ android {
     }
     testOptions {
         unitTests.isIncludeAndroidResources = true
+        unitTests.all { test ->
+            // Screen screenshots are for human review; see core/designsystem/build.gradle.kts.
+            if (!runScreenshots) test.filter.excludeTestsMatching("*ScreenshotTest")
+        }
     }
     lint {
         abortOnError = true
@@ -144,6 +153,10 @@ val checkReleaseConfig = tasks.register("checkReleaseConfig") {
     }
 }
 tasks.matching { it.name == "preReleaseBuild" }.configureEach { dependsOn(checkReleaseConfig) }
+
+roborazzi {
+    outputDir.set(file("screenshots"))
+}
 
 dependencies {
     coreLibraryDesugaring(libs.desugar.jdk.libs)
@@ -184,6 +197,8 @@ dependencies {
     testImplementation(libs.androidx.test.core)
     testImplementation(libs.androidx.test.ext.junit)
     testImplementation(libs.compose.ui.test.junit4)
+    testImplementation(libs.roborazzi)
+    testImplementation(libs.roborazzi.compose)
     debugImplementation(libs.compose.ui.test.manifest)
 
     androidTestImplementation(libs.androidx.test.ext.junit)

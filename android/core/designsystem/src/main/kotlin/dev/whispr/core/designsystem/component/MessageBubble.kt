@@ -1,9 +1,11 @@
 package dev.whispr.core.designsystem.component
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -12,14 +14,19 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.Role
@@ -29,9 +36,13 @@ import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
 import dev.whispr.core.designsystem.R
 import dev.whispr.core.designsystem.icon.WhisprIcons
 import dev.whispr.core.designsystem.theme.WhisprTheme
@@ -134,6 +145,8 @@ fun MessageBubble(
                 color = container,
                 contentColor = content,
                 shape = bubbleShape(direction, groupPosition),
+                // Incoming bubbles sit on the same fog as the screen; a hairline lifts them.
+                border = if (!outgoing && !failed) BorderStroke(WhisprTheme.sizes.hairline, colors.hairline) else null,
                 modifier = Modifier
                     .widthIn(max = maxBubbleWidth)
                     .then(
@@ -201,37 +214,30 @@ fun MessageBubble(
                     }
                     if (quote != null) QuoteBlock(quote)
                     attachment?.invoke()
-                    if (text.isNotEmpty()) {
-                        Text(
-                            text = text,
-                            style = MaterialTheme.typography.bodyLarge,
-                            fontStyle = if (notice) FontStyle.Italic else null,
-                            modifier = Modifier.clearAndSetSemantics { },
+                    val metaColor = when {
+                        failed -> colors.onBubbleFailed
+                        outgoing -> colors.metaOutgoing
+                        else -> colors.metaIncoming
+                    }
+                    val meta: @Composable () -> Unit = {
+                        MessageMeta(
+                            time = if (failed) statusLabel.orEmpty() else time,
+                            status = status.takeIf { outgoing },
+                            expiring = expiring,
+                            color = metaColor,
+                            readColor = colors.readTick,
                         )
                     }
-                    Row(
-                        Modifier.align(Alignment.End).clearAndSetSemantics { },
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(WhisprTheme.spacing.xs),
-                    ) {
-                        if (expiring) {
-                            Icon(
-                                WhisprIcons.Timer,
-                                contentDescription = null,
-                                modifier = Modifier.size(WhisprTheme.sizes.iconSmall),
-                            )
-                        }
-                        Text(
-                            text = if (failed) statusLabel.orEmpty() else time,
-                            style = MaterialTheme.typography.labelSmall,
+                    if (text.isNotEmpty()) {
+                        TextWithMeta(
+                            text = text,
+                            style = MaterialTheme.typography.bodyLarge.copy(
+                                fontStyle = if (notice) FontStyle.Italic else FontStyle.Normal,
+                            ),
+                            meta = meta,
                         )
-                        if (statusLabel != null) {
-                            Icon(
-                                imageVector = status.icon(),
-                                contentDescription = null,
-                                modifier = Modifier.size(WhisprTheme.sizes.iconSmall),
-                            )
-                        }
+                    } else {
+                        Box(Modifier.align(Alignment.End)) { meta() }
                     }
                 }
             }
@@ -239,6 +245,86 @@ fun MessageBubble(
         }
     }
 }
+
+/**
+ * Time, ticks and timer icon as one group (DESIGN.md "Components"): the same
+ * size, order and spacing on every bubble. Ticks: one for sent, two for
+ * delivered, two in the read color once read.
+ */
+@Composable
+private fun MessageMeta(time: String, status: DeliveryStatus?, expiring: Boolean, color: Color, readColor: Color) {
+    Row(
+        Modifier.clearAndSetSemantics { },
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(WhisprTheme.spacing.xxs),
+    ) {
+        if (expiring) {
+            Icon(WhisprIcons.Timer, contentDescription = null, tint = color, modifier = Modifier.size(META_ICON))
+        }
+        Text(
+            text = time,
+            style = MaterialTheme.typography.labelSmall.copy(fontFeatureSettings = "tnum"),
+            color = color,
+            maxLines = 1,
+        )
+        if (status != null && status != DeliveryStatus.Failed) {
+            Icon(
+                imageVector = status.icon(),
+                contentDescription = null,
+                tint = if (status == DeliveryStatus.Read) readColor else color,
+                modifier = Modifier.size(META_ICON),
+            )
+        }
+    }
+}
+
+/**
+ * Message text with its [meta] group. The meta sits after the last line when
+ * it fits there, otherwise on its own line, always flush to the bottom end.
+ */
+@Composable
+private fun TextWithMeta(text: String, style: TextStyle, meta: @Composable () -> Unit) {
+    val lastLayout = remember { arrayOfNulls<TextLayoutResult>(1) }
+    val gap = with(LocalDensity.current) { WhisprTheme.spacing.sm.roundToPx() }
+    Layout(
+        content = {
+            Text(
+                text = text,
+                style = style,
+                onTextLayout = { lastLayout[0] = it },
+                modifier = Modifier.clearAndSetSemantics { },
+            )
+            meta()
+        },
+    ) { measurables, constraints ->
+        val loose = constraints.copy(minWidth = 0, minHeight = 0)
+        val textPlaceable = measurables[0].measure(loose)
+        val metaPlaceable = measurables[1].measure(loose)
+        val layout = lastLayout[0]
+        val lastLine = (layout?.lineCount ?: 1) - 1
+        val lastLineRight = layout?.getLineRight(lastLine)?.toInt() ?: textPlaceable.width
+        val singleLine = (layout?.lineCount ?: 1) == 1
+        val inlineWidth = lastLineRight + gap + metaPlaceable.width
+        val (width, height, inline) = when {
+            singleLine && inlineWidth <= constraints.maxWidth ->
+                Triple(inlineWidth, maxOf(textPlaceable.height, metaPlaceable.height), true)
+            !singleLine && inlineWidth <= textPlaceable.width ->
+                Triple(textPlaceable.width, textPlaceable.height, true)
+            else -> Triple(
+                maxOf(textPlaceable.width, metaPlaceable.width),
+                textPlaceable.height + metaPlaceable.height,
+                false,
+            )
+        }
+        layout(width, height) {
+            textPlaceable.placeRelative(0, 0)
+            val metaY = if (inline) height - metaPlaceable.height else textPlaceable.height
+            metaPlaceable.placeRelative(width - metaPlaceable.width, metaY)
+        }
+    }
+}
+
+private val META_ICON = 15.dp
 
 @Composable
 private fun ReactionRow(reactions: List<ReactionChip>, onClick: ((String) -> Unit)?) {
@@ -255,8 +341,13 @@ private fun ReactionRow(reactions: List<ReactionChip>, onClick: ((String) -> Uni
             val scheme = MaterialTheme.colorScheme
             Surface(
                 shape = MaterialTheme.shapes.small,
-                color = if (r.mine) scheme.secondaryContainer else scheme.surfaceContainerHigh,
-                contentColor = if (r.mine) scheme.onSecondaryContainer else scheme.onSurface,
+                color = WhisprTheme.colors.surface,
+                contentColor = scheme.onSurface,
+                // Yours is outlined in ink; others in a hairline. No color: reactions aren't trust signals.
+                border = BorderStroke(
+                    WhisprTheme.sizes.hairline,
+                    if (r.mine) scheme.onSurface else WhisprTheme.colors.hairline,
+                ),
                 modifier = Modifier
                     .then(if (onClick != null) Modifier.clickable { onClick(r.emoji) } else Modifier)
                     .clearAndSetSemantics {
@@ -279,18 +370,27 @@ private fun ReactionRow(reactions: List<ReactionChip>, onClick: ((String) -> Uni
 
 @Composable
 private fun QuoteBlock(quote: QuotePreview) {
+    // Tinted from the bubble's own content color, so it reads on ink and on white alike.
+    val tint = LocalContentColor.current
     Surface(
         shape = MaterialTheme.shapes.small,
-        color = MaterialTheme.colorScheme.surfaceContainerHighest,
-        contentColor = MaterialTheme.colorScheme.onSurface,
+        color = tint.copy(alpha = QUOTE_FILL_ALPHA),
+        contentColor = tint,
         modifier = Modifier.clearAndSetSemantics { },
     ) {
-        Column(Modifier.padding(horizontal = WhisprTheme.spacing.sm, vertical = WhisprTheme.spacing.xxs)) {
-            Text(quote.author, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+        Column(
+            Modifier.padding(
+                horizontal = WhisprTheme.spacing.sm + WhisprTheme.spacing.xxs,
+                vertical = WhisprTheme.spacing.xs,
+            ),
+        ) {
+            Text(quote.author, style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold))
             Text(quote.text, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
         }
     }
 }
+
+private const val QUOTE_FILL_ALPHA = 0.1f
 
 /** A group event ("Sam added Alex"): centred, quiet, not a bubble. */
 @Composable

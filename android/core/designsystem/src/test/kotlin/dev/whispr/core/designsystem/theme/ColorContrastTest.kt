@@ -63,6 +63,11 @@ class ColorContrastTest {
         add(Triple("onBubbleFailed/bubbleFailed", w.onBubbleFailed, w.bubbleFailed))
         add(Triple("onUnreadBadge/unreadBadge", w.onUnreadBadge, w.unreadBadge))
         add(Triple("onBanner/banner", w.onBanner, w.banner))
+        add(Triple("metaOutgoing/bubbleOutgoing (time, ticks)", w.metaOutgoing, w.bubbleOutgoing))
+        add(Triple("metaIncoming/bubbleIncoming (time)", w.metaIncoming, w.bubbleIncoming))
+        add(Triple("danger/surface (key change preview)", w.danger, c.surface))
+        add(Triple("onSealSoft/sealSoft", w.onSealSoft, w.sealSoft))
+        add(Triple("onDangerSoft/dangerSoft (warning body)", w.onDangerSoft, w.dangerSoft))
         w.avatarPalette.forEachIndexed { i, (bg, fg) -> add(Triple("avatar[$i]", fg, bg)) }
     }
 

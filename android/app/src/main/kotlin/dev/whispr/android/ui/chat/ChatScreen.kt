@@ -10,6 +10,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -32,6 +33,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
@@ -240,6 +242,9 @@ fun ChatScreen(
         },
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).imePadding()) {
+            if (state.content is ChatContent.Messages && state.timerSeconds > 0) {
+                DisappearingStrip(state.timerSeconds)
+            }
             OfflineBanner(visible = state.offline, message = stringResource(R.string.chat_offline))
             Box(Modifier.weight(1f)) {
                 when (val content = state.content) {
@@ -410,13 +415,14 @@ private fun Composer(
     val askMic = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) startRecording()
     }
-    Row(
-        Modifier.fillMaxWidth().navigationBarsPadding(),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
+    val attach: @Composable () -> Unit = {
         Box {
             IconButton(onClick = { menu = true }, enabled = !recording) {
-                Icon(WhisprIcons.Attach, contentDescription = stringResource(R.string.chat_attach))
+                Icon(
+                    WhisprIcons.Attach,
+                    contentDescription = stringResource(R.string.chat_attach),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                 DropdownMenuItem(
@@ -437,36 +443,97 @@ private fun Composer(
                 )
             }
         }
+    }
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .navigationBarsPadding()
+            .padding(horizontal = WhisprTheme.spacing.md, vertical = WhisprTheme.spacing.sm),
+    ) {
         if (recording) {
-            Text(
-                stringResource(R.string.chat_recording),
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.error,
-                modifier = Modifier.weight(1f).padding(horizontal = WhisprTheme.spacing.md),
-            )
-            IconButton(onClick = {
-                recording = false
-                recorder.stop()?.let { r -> onSendMedia(r.uri, AttachmentKind.Voice, null, r.durationMs) }
-            }) {
-                Icon(WhisprIcons.Stop, contentDescription = stringResource(R.string.chat_record_stop))
+            Surface(
+                shape = MaterialTheme.shapes.large,
+                color = WhisprTheme.colors.dangerSoft,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Row(
+                    Modifier.padding(start = WhisprTheme.spacing.lg, end = WhisprTheme.spacing.xs),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        stringResource(R.string.chat_recording),
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = WhisprTheme.colors.danger,
+                        modifier = Modifier.weight(1f),
+                    )
+                    IconButton(onClick = {
+                        recording = false
+                        recorder.stop()?.let { r -> onSendMedia(r.uri, AttachmentKind.Voice, null, r.durationMs) }
+                    }) {
+                        Icon(
+                            WhisprIcons.Stop,
+                            contentDescription = stringResource(R.string.chat_record_stop),
+                            tint = WhisprTheme.colors.danger,
+                        )
+                    }
+                }
             }
         } else {
             MessageInputBar(
                 value = state.input,
                 onValueChange = onInput,
                 onSend = onSend,
-                modifier = Modifier.weight(1f),
+                leading = attach,
+                trailingWhenEmpty = {
+                    IconButton(onClick = {
+                        val granted =
+                            ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+                                PackageManager.PERMISSION_GRANTED
+                        if (granted) startRecording() else askMic.launch(Manifest.permission.RECORD_AUDIO)
+                    }) {
+                        Icon(
+                            WhisprIcons.Mic,
+                            contentDescription = stringResource(R.string.chat_record),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                },
             )
-            if (state.input.isBlank()) {
-                IconButton(onClick = {
-                    val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
-                        PackageManager.PERMISSION_GRANTED
-                    if (granted) startRecording() else askMic.launch(Manifest.permission.RECORD_AUDIO)
-                }) {
-                    Icon(WhisprIcons.Mic, contentDescription = stringResource(R.string.chat_record))
-                }
-            }
         }
+    }
+}
+
+/**
+ * Shown under the header only while disappearing messages are on (they are
+ * off by default): one quiet line naming the timer.
+ */
+@Composable
+private fun DisappearingStrip(seconds: Long) {
+    Column {
+        HorizontalDivider(color = WhisprTheme.colors.hairline)
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .background(WhisprTheme.colors.surface)
+                .padding(horizontal = WhisprTheme.spacing.lg, vertical = WhisprTheme.spacing.sm),
+            horizontalArrangement = Arrangement.spacedBy(WhisprTheme.spacing.xs, Alignment.CenterHorizontally),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                WhisprIcons.Timer,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(WhisprTheme.sizes.iconSmall),
+            )
+            Text(
+                stringResource(R.string.chat_strip_timer, timerLabel(seconds)),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        HorizontalDivider(color = WhisprTheme.colors.hairline)
     }
 }
 

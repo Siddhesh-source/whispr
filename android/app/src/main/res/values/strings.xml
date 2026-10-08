@@ -81,6 +81,8 @@
     <string name="settings_typing">Typing indicators</string>
     <string name="settings_typing_body">Let contacts see when you\'re typing. When off, you won\'t see theirs either.</string>
     <string name="settings_copy_id">Copy account ID</string>
+    <string name="settings_section_account">Account</string>
+    <string name="settings_section_about">About</string>
     <string name="settings_screen_security">Screen security</string>
     <string name="settings_screen_security_body">Block screenshots and screen recording, and hide Whispr\'s contents in the recent apps list.</string>
     <string name="settings_delete_account">Delete account</string>
@@ -233,6 +235,7 @@
     <string name="chat_deleted">This message was deleted</string>
     <string name="chat_quote_missing">Original message not found</string>
     <string name="chat_timer">Disappearing messages</string>
+    <string name="chat_strip_timer">Messages disappear after %1$s</string>
     <string name="chat_timer_off">Off</string>
     <string name="chat_timer_5m">5 minutes</string>
     <string name="chat_timer_1h">1 hour</string>
