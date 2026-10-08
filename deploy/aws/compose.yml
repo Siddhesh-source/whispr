@@ -79,6 +79,9 @@ services:
       S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?}
       S3_BUCKET: whispr-media
       S3_USE_SSL: "false"
+      # Call relay credentials (coturn below checks them with the same secret).
+      TURN_SECRET: ${TURN_SECRET:?}
+      TURN_URLS: stun:${WHISPR_HOST}:3478,turn:${WHISPR_HOST}:3478?transport=udp,turn:${WHISPR_HOST}:3478?transport=tcp
       GOMEMLIMIT: 96MiB
     networks: [internal, edge]
     mem_limit: 160m
@@ -101,6 +104,48 @@ services:
       edge: { ipv4_address: 172.30.0.10 }
     mem_limit: 96m
     depends_on: [server]
+
+  # TURN relay for calls whose two phones can't reach each other directly.
+  # Host networking: relaying needs a UDP port range. Media is DTLS-SRTP,
+  # so the relay only ever handles ciphertext. Bandwidth is capped so the
+  # host stays inside the free tier's 100 GB of monthly egress.
+  coturn:
+    image: coturn/coturn:4.18-alpine
+    restart: unless-stopped
+    network_mode: host
+    mem_limit: 64m
+    command:
+      - -n
+      - --listening-port=3478
+      - --external-ip=${TURN_EXTERNAL_IP:?}
+      - --min-port=49160
+      - --max-port=49200
+      - --use-auth-secret
+      - --static-auth-secret=${TURN_SECRET:?}
+      - --realm=${WHISPR_HOST:?}
+      - --fingerprint
+      - --no-cli
+      - --no-tls
+      - --no-dtls
+      - --no-multicast-peers
+      - --no-software-attribute
+      - --stale-nonce=600
+      - --max-bps=600000
+      - --user-quota=4
+      - --total-quota=40
+      # Never relay into the VPC, the metadata service, Docker networks or loopback.
+      - --denied-peer-ip=0.0.0.0-0.255.255.255
+      - --denied-peer-ip=10.0.0.0-10.255.255.255
+      - --denied-peer-ip=100.64.0.0-100.127.255.255
+      - --denied-peer-ip=127.0.0.0-127.255.255.255
+      - --denied-peer-ip=169.254.0.0-169.254.255.255
+      - --denied-peer-ip=172.16.0.0-172.31.255.255
+      - --denied-peer-ip=192.168.0.0-192.168.255.255
+      - --denied-peer-ip=::1
+      - --denied-peer-ip=fc00::-fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff
+      - --denied-peer-ip=fe80::-febf:ffff:ffff:ffff:ffff:ffff:ffff:ffff
+      - --log-file=stdout
+      - --simple-log
 
 volumes:
   db-data:

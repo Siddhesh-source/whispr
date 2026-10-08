@@ -46,6 +46,14 @@ if [ ! -f .env ]; then
     echo "WHISPR_HOST=$WHISPR_HOST"
   } > .env
 fi
+# Added after the first release: the call relay's shared secret.
+grep -q '^TURN_SECRET=' .env || { umask 077; echo "TURN_SECRET=$(openssl rand -hex 32)" >> .env; }
+# coturn must advertise the public address; EC2 only sees its private one (IMDSv2).
+token=$(curl -sf -X PUT http://169.254.169.254/latest/api/token -H 'X-aws-ec2-metadata-token-ttl-seconds: 60')
+public=$(curl -sf -H "X-aws-ec2-metadata-token: $token" http://169.254.169.254/latest/meta-data/public-ipv4)
+private=$(curl -sf -H "X-aws-ec2-metadata-token: $token" http://169.254.169.254/latest/meta-data/local-ipv4)
+sed -i '/^TURN_EXTERNAL_IP=/d' .env
+echo "TURN_EXTERNAL_IP=$public/$private" >> .env
 
 sudo tee /etc/systemd/system/whispr-backup.service > /dev/null <<'EOF'
 [Unit]
