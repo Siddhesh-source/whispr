@@ -251,3 +251,51 @@ Users delete their own accounts from the app; nothing is needed from the
 operator. The server has no content to moderate. Abuse controls are the rate
 limits above and the per-recipient undelivered quota (1,000 envelopes from
 one sender to one recipient).
+
+## 8. AWS on the free plan (the beta server)
+
+The beta server runs on one AWS instance sized to use as little of the
+account's free-plan credit as possible. Files: `deploy/aws/`.
+
+| Resource | Choice | Why |
+|---|---|---|
+| Instance | `t4g.micro` (arm64, 2 vCPU burst, 1 GB) with CPU credits set to **standard** | Cheapest free-plan type; standard credits never bill surplus CPU |
+| OS | Ubuntu 24.04 **minimal** | Smallest memory and disk footprint |
+| Disk | 10 GB gp3, encrypted | Enough for the OS, images, Postgres, 30 days of media and 7 days of dumps |
+| Address | One Elastic IP | The hostname is derived from it, so it must not change |
+| Hostname | `wp-os.duckdns.org` (DuckDNS, free) pointing at the Elastic IP | DuckDNS is on the Public Suffix List, so its Let's Encrypt rate limits are per name; sslip.io is not and shares one limit across all its users |
+| TLS | Caddy, Let's Encrypt only (`acme_ca`), HTTP/1.1 and HTTP/2 | Matches the pinned ISRG roots; no HTTP/3 UDP listener |
+| Database, storage | Postgres and MinIO in containers on the same disk | No RDS hours, no S3 request charges |
+| Image | Built by `.github/workflows/server-image.yml` on GitHub's arm64 runner | The 1 GB host never compiles libsignal |
+| Not used | RDS, S3, load balancer, NAT gateway, CloudWatch agent, detailed monitoring, snapshots | Each would draw credit for nothing the beta needs |
+
+Memory budget (container caps): Postgres 192 MB (`shared_buffers=32MB`,
+30 connections), MinIO 192 MB (`GOMEMLIMIT=112MiB`, console off), server
+160 MB (`GOMEMLIMIT=96MiB`), Caddy 96 MB, plus 1 GB of swap. Logs are capped
+(Docker 3×10 MB per container, journald 100 MB). Postgres is dumped daily at
+03:30 by a systemd timer and dumps are kept 7 days.
+
+First boot runs `deploy/aws/user-data.sh` (swap, Docker, log caps). Deploy
+or update with:
+
+```sh
+WHISPR_HOST=wp-os.duckdns.org deploy/aws/deploy.sh <elastic-ip> D:/whispr-release/whispr-ec2.pem
+```
+
+Without `WHISPR_HOST` the script uses `<ip-with-dashes>.sslip.io`.
+
+**Certificate pins.** Let's Encrypt's current ECDSA chain is
+leaf → YE2 → Root YE, with Root YE cross-signed by ISRG Root X2. Phones that
+already trust Root YE end the chain there; older ones go on to X2. The
+release pins all four ISRG roots so either path, and the RSA chain, pass:
+ISRG Root X1, ISRG Root X2, Root YE and Root YR
+(`WHISPR_CERT_PINS` repository variable). Checked against the live server
+with the app's `TlsPolicy`: the pins are accepted and wrong pins are refused.
+
+It downloads the latest arm64 image artifact, copies it and the config to
+`/srv/whispr`, generates `.env` secrets on the host the first time, and runs
+`docker compose up -d`. SSH is open only to the maintainer's address in the
+`whispr-sg` security group; update that rule if your IP changes.
+
+The server's IP is part of its hostname, and the hostname is built into
+release apps, so keep the Elastic IP for as long as those builds are in use.

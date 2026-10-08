@@ -1,0 +1,21 @@
+{
+	# Let's Encrypt only: release builds pin the ISRG roots, so a fallback
+	# to another CA would lock every client out.
+	acme_ca https://acme-v02.api.letsencrypt.org/directory
+	servers {
+		protocols h1 h2
+	}
+}
+
+{$WHISPR_HOST} {
+	header {
+		Strict-Transport-Security "max-age=63072000"
+		-Server
+	}
+	# Attachments are up to 25 MiB of ciphertext. No compression: payloads
+	# are ciphertext and tiny JSON, so it would only cost CPU.
+	request_body {
+		max_size 26MB
+	}
+	reverse_proxy server:8080
+}

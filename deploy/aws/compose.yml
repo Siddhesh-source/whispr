@@ -1,0 +1,109 @@
+# Whispr on one 1 GB AWS t4g.micro (docs/DEPLOYMENT.md, "AWS free plan").
+# Every service has a memory cap and a Go/Postgres budget that fits the box
+# together with the OS; the host has 1 GB of swap as a safety margin.
+# Secrets come from .env on the host (created by deploy.sh, never committed).
+name: whispr
+
+networks:
+  edge:
+    ipam:
+      config: [{ subnet: 172.30.0.0/24 }]
+  internal:
+    internal: true
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    command:
+      - postgres
+      - -c
+      - shared_buffers=32MB
+      - -c
+      - effective_cache_size=128MB
+      - -c
+      - work_mem=2MB
+      - -c
+      - maintenance_work_mem=16MB
+      - -c
+      - max_connections=30
+      - -c
+      - wal_buffers=1MB
+    environment:
+      POSTGRES_USER: whispr
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+      POSTGRES_DB: whispr
+    volumes: [db-data:/var/lib/postgresql/data]
+    networks: [internal]
+    mem_limit: 192m
+    shm_size: 64m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U whispr -d whispr"]
+      interval: 30s
+      timeout: 3s
+      retries: 10
+      start_period: 20s
+
+  minio:
+    image: cgr.dev/chainguard/minio:latest
+    restart: unless-stopped
+    command: ["server", "/data"]
+    environment:
+      MINIO_ROOT_USER: whispr
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?}
+      MINIO_BROWSER: "off"
+      GOMEMLIMIT: 112MiB
+    volumes: [minio-data:/data]
+    networks: [internal]
+    mem_limit: 192m
+
+  minio-init:
+    image: cgr.dev/chainguard/minio-client:latest
+    depends_on: [minio]
+    environment:
+      MC_HOST_local: http://whispr:${MINIO_ROOT_PASSWORD:?}@minio:9000
+    command: ["mb", "--ignore-existing", "local/whispr-media"]
+    networks: [internal]
+    restart: on-failure
+
+  server:
+    image: whispr-server:deploy
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://whispr:${POSTGRES_PASSWORD:?}@db:5432/whispr?sslmode=disable
+      LISTEN_ADDR: ":8080"
+      LOG_LEVEL: info
+      TRUSTED_PROXIES: 172.30.0.10
+      S3_ENDPOINT: minio:9000
+      S3_ACCESS_KEY: whispr
+      S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?}
+      S3_BUCKET: whispr-media
+      S3_USE_SSL: "false"
+      GOMEMLIMIT: 96MiB
+    networks: [internal, edge]
+    mem_limit: 160m
+    depends_on:
+      db: { condition: service_healthy }
+      minio-init: { condition: service_completed_successfully }
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      WHISPR_HOST: ${WHISPR_HOST:?}
+      GOMEMLIMIT: 48MiB
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks:
+      edge: { ipv4_address: 172.30.0.10 }
+    mem_limit: 96m
+    depends_on: [server]
+
+volumes:
+  db-data:
+  minio-data:
+  caddy-data:
+  caddy-config:
