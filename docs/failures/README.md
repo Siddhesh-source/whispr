@@ -27,3 +27,6 @@ was done, and whether it is fixed or open.
 | 2026-10-08 | [CI e2e live tests hit the new registration limit](2026-10-08-e2e-registration-limit.md) | fixed |
 | 2026-10-08 | [CI e2e bucket copy was always empty](2026-10-08-e2e-bucket-copy-empty.md) | fixed |
 | 2026-10-08 | [CI e2e live tests were restored from the build cache](2026-10-08-e2e-live-tests-cached.md) | fixed |
+| 2026-10-09 | [Composer dropped typed characters](2026-10-09-composer-dropped-keystrokes.md) | fixed |
+| 2026-10-09 | [Fixes while building camera, GIFs, status and calls](2026-10-09-camera-gifs-status-calls-fixes.md) | fixed (2 open) |
+| 2026-10-09 | [Server deploy blocked: SSH rule points at an old IP](2026-10-09-deploy-blocked-ssh-rule.md) | open |
