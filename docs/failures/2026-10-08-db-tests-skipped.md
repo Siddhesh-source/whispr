@@ -1,7 +1,7 @@
 # Postgres-backed server tests skipped locally
 
 **Date:** 2026-10-08
-**Status:** open (environment)
+**Status:** fixed (run once Docker was started)
 
 ## What failed
 
@@ -32,3 +32,10 @@ export WHISPR_TEST_DATABASE_URL='postgres://whispr:whispr-dev-only@127.0.0.1:543
 go test ./...
 WHISPR_LOAD=1 go test ./internal/messaging -run TestGatewayLoad -v
 ```
+
+## Result
+
+Docker was started later the same day. The full suite passed against
+Postgres (three shuffled runs), and the load test passed. Running them
+exposed two real problems, recorded in
+`2026-10-08-token-expiry-close-race.md`.

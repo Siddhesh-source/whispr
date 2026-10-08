@@ -290,6 +290,11 @@ acknowledgement card ignores obscured touches (L4). Covered by
   disappearing messages on both sides, timers from non-members, forwarded
   media, search escaping, 4001 reconnect, TLS pinning, account deletion.
 
-The Postgres-backed server tests and the load test were not run on the
-release machine (Docker was not running); they run in CI. See
-`docs/failures/2026-10-08-db-tests-skipped.md`.
+The Postgres-backed suite and the load test were run locally against
+Postgres 17. They found that an expired socket was usually dropped without
+its 4001 close (the client then backed off instead of signing in again),
+fixed before release (`docs/failures/2026-10-08-token-expiry-close-race.md`).
+Load result on one development machine: 200 connected users, 10,000
+messages sent in a burst, all delivered exactly once at 1,100–1,500
+messages a second; p99 end-to-end latency 6–8 s, the time to drain the
+burst.
