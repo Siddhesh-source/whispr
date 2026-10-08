@@ -17,3 +17,9 @@ was done, and whether it is fixed or open.
 | 2026-10-05 | [Intermittent test failures: key upload never retried](2026-10-05-flaky-tests-under-load.md) | fixed |
 | 2026-10-05 | [CI ciphertext scan could pass without proving anything](2026-10-05-e2e-marker-not-forwarded.md) | fixed |
 | 2026-10-05 | [Compile, lint, test and tooling fixes](2026-10-05-compile-and-test-fixes.md) | fixed |
+| 2026-10-07 | [Go toolchain on PATH could not compile](2026-10-07-go-toolchain-broken.md) | worked around (env) |
+| 2026-10-08 | [Release build failed in R8: missing Firebase transport class](2026-10-08-release-r8-missing-class.md) | fixed |
+| 2026-10-08 | [Release APK carried 440 MB of native debug info](2026-10-08-release-apk-unstripped.md) | fixed |
+| 2026-10-08 | [Postgres-backed server tests skipped locally](2026-10-08-db-tests-skipped.md) | open (env) |
+| 2026-10-08 | [Scripted edits dropped backslash escapes](2026-10-08-shell-edit-escapes.md) | fixed |
+| 2026-10-08 | [Compile and test fixes: message actions and hardening](2026-10-08-compile-and-test-fixes.md) | fixed |
