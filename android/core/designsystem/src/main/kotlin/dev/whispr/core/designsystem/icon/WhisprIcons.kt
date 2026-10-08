@@ -29,7 +29,12 @@ object WhisprIcons {
     val Unlocked: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ic_lock_open)
     val QrCode: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ic_qr_code)
     val QrScanner: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ic_qr_scanner)
+
+    /** The seal: this contact is verified. */
     val Verified: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ic_verified)
+
+    /** The verify action (compare safety numbers), distinct from the seal. */
+    val Shield: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ic_shield)
     val Warning: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ic_warning)
     val Edit: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ic_edit)
     val Image: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ic_image)

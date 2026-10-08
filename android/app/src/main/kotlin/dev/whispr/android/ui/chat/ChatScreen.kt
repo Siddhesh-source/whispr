@@ -37,6 +37,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
+import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
@@ -54,6 +55,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
@@ -233,7 +235,7 @@ fun ChatScreen(
                             }
                         } else {
                             IconButton(onClick = onVerify) {
-                                Icon(WhisprIcons.Verified, contentDescription = stringResource(R.string.chat_verify))
+                                Icon(WhisprIcons.Shield, contentDescription = stringResource(R.string.chat_verify))
                             }
                         }
                     }
@@ -771,6 +773,7 @@ private fun ActionSheet(
         @Composable
         fun action(label: Int, icon: androidx.compose.ui.graphics.vector.ImageVector, run: () -> Unit) {
             ListItem(
+                colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                 headlineContent = { Text(stringResource(label)) },
                 leadingContent = { Icon(icon, contentDescription = null) },
                 modifier = Modifier.clickable {
@@ -830,6 +833,7 @@ private fun ForwardPicker(
                 LazyColumn {
                     items(targets, key = { it.id.value }) { c ->
                         ListItem(
+                            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                             headlineContent = { Text(c.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                             modifier = Modifier.clickable { onPick(c.id) },
                         )
