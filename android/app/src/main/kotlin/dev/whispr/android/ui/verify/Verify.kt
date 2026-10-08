@@ -37,6 +37,7 @@ import androidx.navigation.toRoute
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.whispr.android.R
 import dev.whispr.android.navigation.VerifyDestination
+import dev.whispr.android.ui.FilterObscuredTouches
 import dev.whispr.android.ui.scan.QrScanner
 import dev.whispr.core.designsystem.component.ErrorState
 import dev.whispr.core.designsystem.component.LoadingState
@@ -145,6 +146,7 @@ fun VerifyScreen(
     onScanned: (String) -> Unit,
     onSetVerified: (Boolean) -> Unit,
 ) {
+    FilterObscuredTouches()
     Scaffold(
         containerColor = MaterialTheme.colorScheme.surface,
         topBar = { WhisprTopBar(title = stringResource(R.string.verify_title, state.name), onNavigateBack = onBack) },

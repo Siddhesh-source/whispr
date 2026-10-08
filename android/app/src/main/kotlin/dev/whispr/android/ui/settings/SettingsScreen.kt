@@ -26,7 +26,6 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -39,7 +38,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.heading
@@ -48,6 +46,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.whispr.android.R
+import dev.whispr.android.ui.FilterObscuredTouches
 import dev.whispr.android.ui.rememberAvatarBitmap
 import dev.whispr.core.designsystem.component.ErrorState
 import dev.whispr.core.designsystem.component.LoadingState
@@ -182,11 +181,7 @@ private fun DeleteAccountDialog(onConfirm: () -> Unit, onDismiss: () -> Unit) {
         title = { Text(stringResource(R.string.settings_delete_title)) },
         text = {
             // Ignore taps while another app draws over this dialog (tapjacking).
-            val view = LocalView.current
-            DisposableEffect(view) {
-                view.filterTouchesWhenObscured = true
-                onDispose { }
-            }
+            FilterObscuredTouches()
             Text(stringResource(R.string.settings_delete_message))
         },
         confirmButton = {

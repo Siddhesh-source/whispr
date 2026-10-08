@@ -48,6 +48,9 @@ fun firebaseValue(key: String) =
 android {
     namespace = "dev.whispr.android"
     compileSdk = 37
+    // Pinned so release builds can strip native debug info (libsignal ships
+    // ~110 MB of it per ABI). CI installs this version; see release.yml.
+    ndkVersion = "28.2.13676358"
 
     defaultConfig {
         applicationId = "dev.whispr.android"

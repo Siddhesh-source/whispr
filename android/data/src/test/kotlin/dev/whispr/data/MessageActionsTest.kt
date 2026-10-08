@@ -6,6 +6,8 @@ import dev.whispr.data.messaging.Payload
 import dev.whispr.data.messaging.PayloadCodec
 import dev.whispr.domain.model.AttachmentKind
 import dev.whispr.domain.model.AttachmentState
+import dev.whispr.domain.model.GroupResult
+import dev.whispr.domain.model.GroupStatus
 import dev.whispr.domain.model.MediaSource
 import dev.whispr.domain.model.SendResult
 import dev.whispr.domain.model.UserId
@@ -104,6 +106,27 @@ class MessageActionsTest {
         val kept = alice.messages(alice.direct(bob)).single { it.id == id }
         assertFalse(kept.deleted)
         assertEquals("keep me", kept.text)
+    }
+
+    @Test
+    fun timerFromSomeoneOutsideTheGroupIsIgnored() = runBlocking {
+        val g = (alice.groups.create("Pair", listOf(UserId(bob.id))) as GroupResult.Ok).group
+        eventually("bob joined") { bob.groups.observeGroup(g).first()?.status == GroupStatus.Active }
+        val now = System.currentTimeMillis()
+        // Carol is Alice's contact but not in the group, and claims to set its timer.
+        carol.db.outboxDao().enqueue(
+            OutboxEntity(
+                messageId = UUID.randomUUID().toString(),
+                conversationId = carol.direct(alice).value,
+                recipientId = alice.id,
+                payload = PayloadCodec.encode(Payload.Timer(3600, now, g = g.value)),
+                clientTs = now,
+            ),
+        )
+        carol.repo.sendText(UserId(alice.id), "after")
+        eventually("alice has the later message") { alice.texts(alice.direct(carol)).contains("after") }
+        assertEquals(0L, alice.repo.observeTimer(g.conversation).first())
+        assertTrue(alice.messages(g.conversation).none { it.system && it.text.contains("disappearing") })
     }
 
     @Test

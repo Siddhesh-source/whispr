@@ -67,6 +67,7 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.whispr.android.R
+import dev.whispr.android.ui.FilterObscuredTouches
 import dev.whispr.android.ui.formatTime
 import dev.whispr.core.designsystem.component.BubbleDirection
 import dev.whispr.core.designsystem.component.DeliveryStatus
@@ -272,12 +273,9 @@ fun ChatScreen(
             if (state.content is ChatContent.Messages) {
                 when {
                     // Never accepted silently: sending stays paused until the user decides.
-                    state.trust == TrustState.KeyChanged -> WarningCard(
-                        title = stringResource(R.string.chat_key_changed_title),
-                        message = stringResource(R.string.chat_key_changed_message, state.peerName),
-                        primaryLabel = stringResource(R.string.chat_key_changed_accept),
-                        onPrimary = onAcknowledgeKeyChange,
-                        modifier = Modifier.padding(WhisprTheme.spacing.md).navigationBarsPadding(),
+                    state.trust == TrustState.KeyChanged -> KeyChangedCard(
+                        state.peerName,
+                        onAcknowledgeKeyChange,
                     )
                     state.isRequest -> RequestBar(
                         stringResource(R.string.chat_request_message, state.peerName),
@@ -870,6 +868,18 @@ private fun ReactionPicker(mine: String?, onPick: (String?) -> Unit, onDismiss: 
 }
 
 private val REACTIONS = listOf("👍", "❤️", "😂", "😮", "😢", "🙏")
+
+@Composable
+private fun KeyChangedCard(peerName: String, onAcknowledge: () -> Unit) {
+    FilterObscuredTouches()
+    WarningCard(
+        title = stringResource(R.string.chat_key_changed_title),
+        message = stringResource(R.string.chat_key_changed_message, peerName),
+        primaryLabel = stringResource(R.string.chat_key_changed_accept),
+        onPrimary = onAcknowledge,
+        modifier = Modifier.padding(WhisprTheme.spacing.md).navigationBarsPadding(),
+    )
+}
 
 @Composable
 private fun RequestBar(message: String, onAccept: () -> Unit, onDecline: () -> Unit) {
