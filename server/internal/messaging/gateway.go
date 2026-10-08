@@ -115,11 +115,15 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// peer's close frame, and a dead peer never sends one. Messages arriving
 	// meanwhile must trigger a push, not wait on a ghost connection.
 	g.hub.unregister(user, sess)
-	cancel()
 	if errors.Is(err, errTokenExpired) {
+		// Close before cancelling: cancelling the reader's context makes the
+		// library drop the connection at once, and the client would see a bare
+		// EOF instead of 4001 (and back off instead of signing in again).
 		_ = conn.Close(StatusTokenExpired, "token_expired")
+		cancel()
 		return
 	}
+	cancel()
 	if err != nil && !errors.Is(err, context.Canceled) {
 		_ = conn.CloseNow() // peer unresponsive or protocol error
 		return
