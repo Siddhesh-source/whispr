@@ -65,6 +65,16 @@ jobs:
         run: >-
           ./gradlew -Porg.gradle.java.installations.auto-download=false
           :data:testDebugUnitTest --tests '*Live*'
+      # A cached or skipped test run would make every check below vacuous.
+      - name: Live tests really ran
+        run: |
+          for t in LiveGroupsTest LiveMessagingTest LiveServerTest; do
+            f="android/data/build/test-results/testDebugUnitTest/TEST-dev.whispr.data.$t.xml"
+            if [ ! -f "$f" ] || grep -q 'skipped="[1-9]' "$f"; then
+              echo "::error title=live tests::$t did not run (missing or skipped)"
+              exit 1
+            fi
+          done
       - name: Stop capture
         if: always()
         run: sudo pkill -INT tcpdump; sleep 1; sudo chmod a+r "$RUNNER_TEMP/frames.pcap"

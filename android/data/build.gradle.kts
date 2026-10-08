@@ -27,6 +27,15 @@ android {
             // The text CI then searches for in the database dump, traffic and media bucket.
             // Without it the marker tests skip (or pick their own) and that scan proves nothing.
             System.getenv("WHISPR_E2E_MARKER")?.let { test.environment("WHISPR_E2E_MARKER", it) }
+            // Environment variables are not task inputs: without these, a cached
+            // run without a server (or with yesterday's marker) would be reused and
+            // the live tests would silently not run.
+            test.inputs.property("whisprServerUrl", System.getenv("WHISPR_SERVER_URL").orEmpty())
+            test.inputs.property("whisprE2eMarker", System.getenv("WHISPR_E2E_MARKER").orEmpty())
+            if (!System.getenv("WHISPR_SERVER_URL").isNullOrBlank()) {
+                test.outputs.cacheIf { false }
+                test.outputs.upToDateWhen { false }
+            }
         }
     }
 }
