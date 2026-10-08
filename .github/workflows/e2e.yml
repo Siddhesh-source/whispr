@@ -78,14 +78,30 @@ jobs:
           # The client image runs as uid 65532; without write access it
           # "mirrors" nothing and still exits 0.
           chmod 777 "$RUNNER_TEMP/bucket"
-          docker run --rm --network whispr_default \
-            -e MC_HOST_local=http://whispr:whispr-dev-only@minio:9000 \
-            -v "$RUNNER_TEMP/bucket:/out" \
-            cgr.dev/chainguard/minio-client:latest mirror local/whispr-media /out
+          mc() {
+            docker run --rm --network whispr_default \
+              -e MC_HOST_local=http://whispr:whispr-dev-only@minio:9000 \
+              -v "$RUNNER_TEMP/bucket:/out" \
+              cgr.dev/chainguard/minio-client:latest "$@"
+          }
+          set +e
+          listing=$(mc ls --recursive local/whispr-media 2>&1); ls_rc=$?
+          mirror=$(mc mirror local/whispr-media /out 2>&1); mirror_rc=$?
+          set -e
           sudo chmod -R a+r "$RUNNER_TEMP/bucket"
           count=$(find "$RUNNER_TEMP/bucket" -type f | wc -l)
-          echo "objects: $count"
-          test "$count" -gt 0 # an empty bucket would prove nothing
+          echo "objects: $count, ls rc=$ls_rc, mirror rc=$mirror_rc"
+          echo "$listing"
+          echo "$mirror"
+          # An empty bucket would prove nothing. Job logs need sign-in to read,
+          # so the evidence also goes into annotations.
+          if [ "$mirror_rc" -ne 0 ] || [ "$count" -eq 0 ]; then
+            echo "::error title=bucket copy::objects=$count ls_rc=$ls_rc mirror_rc=$mirror_rc networks=$(docker network ls --format '{{.Name}}' | paste -sd ' ')"
+            echo "::error title=bucket ls::$(echo "$listing" | tail -5 | paste -sd '|')"
+            echo "::error title=bucket mirror::$(echo "$mirror" | tail -5 | paste -sd '|')"
+            echo "::error title=server media log::$(docker compose logs server 2>&1 | grep -i -m5 -e attach -e s3 -e media | paste -sd '|')"
+            exit 1
+          fi
       # Client-to-server WebSocket frames are masked, so the capture mainly
       # proves the server-to-client direction and plain HTTP; the database
       # dump and bucket copy cover what the server stores.
