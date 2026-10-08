@@ -1,114 +1,81 @@
 # Whispr
 
-A privacy-first, end-to-end encrypted Android messenger. No ads, tracking,
-feeds, or phone numbers. All protocol cryptography comes from
-[libsignal](https://github.com/signalapp/libsignal). Licensed AGPL-3.0, the
-same licence as libsignal.
+A privacy-first, end-to-end encrypted Android messenger. No ads, trackers,
+feeds, phone numbers, e-mail addresses or passwords. All protocol
+cryptography comes from [libsignal](https://github.com/signalapp/libsignal).
+Licensed AGPL-3.0, the same licence as libsignal.
 
-```
-android/   Kotlin + Jetpack Compose client
-server/    Go backend (REST and WebSocket), PostgreSQL, S3-compatible storage
-docs/      Architecture and threat model
-```
+**Status: public beta (0.1.0-beta.1).** It has had an internal security
+review (`docs/SECURITY_REVIEW.md`) but no independent audit yet. Do not rely
+on it where a failure could hurt someone.
 
-Messages, receipts, contact requests and typing indicators are end-to-end
-encrypted with libsignal (PQXDH and the Double Ratchet). Group chats use
-libsignal sender keys (one encryption, fanned out by the server; keys rotate
-when anyone leaves or is removed), and the group name, picture and members are
-encrypted too. Photos, files and voice messages are encrypted on the device
-with a fresh key; object storage only ever holds ciphertext. The server relays
-and stores ciphertext only; `docs/THREAT_MODEL.md` lists what it still sees.
+## What it does
 
-## Backend
+- **Private by design.** Your account is a key pair made on your phone. The
+  server relays and briefly stores ciphertext; it never sees message text,
+  photos, contact lists, group names or members.
+- **Signal protocol.** One-to-one chats use PQXDH and the Double Ratchet;
+  groups use sender keys, rotated when anyone leaves. Photos, files and
+  voice messages are encrypted on the phone with a fresh key each.
+- **Messaging.** Replies, reactions, forwarding, copy, delete for me or for
+  everyone, disappearing messages, and search over the messages on your
+  phone.
+- **Trust you can check.** Add people by QR code or username, compare safety
+  numbers, and get a warning (with sending paused) if someone's key changes.
+- **Protects the phone too.** Encrypted local database, screen security
+  against screenshots and recents thumbnails, private lock-screen
+  notifications, and a delete-account button that erases everything.
 
-```sh
-docker compose up --build     # Postgres, MinIO, server on 127.0.0.1:8080
-curl http://127.0.0.1:8080/healthz
-```
+What the server still learns, and what we have not solved yet, is written
+down in `docs/THREAT_MODEL.md`.
 
-The first build compiles libsignal's C library from source, which takes a few
-minutes. Later builds are cached.
+## Install
 
-Server tests:
-
-```sh
-cd server
-go test ./...                                   # unit tests (fake verifier)
-WHISPR_TEST_DATABASE_URL=postgres://... go test ./...   # + Postgres integration tests
-WHISPR_TEST_S3_ENDPOINT=127.0.0.1:9000 WHISPR_TEST_S3_ACCESS_KEY=whispr \
-  WHISPR_TEST_S3_SECRET_KEY=whispr-dev-only WHISPR_TEST_S3_BUCKET=whispr-media \
-  WHISPR_TEST_DATABASE_URL=... go test ./internal/attachments/   # + real MinIO
-docker build --target test .                    # full suite with real libsignal
-```
-
-Integration tests create and drop their own database per test on the server
-in `WHISPR_TEST_DATABASE_URL` (the user needs `CREATEDB`; the compose user has
-it), so packages run in parallel and never touch existing data.
-
-The server binary only runs when built with `-tags libsignal`. A build
-without it refuses to start rather than run without signature verification.
-
-## Android
+Download the APK from the latest
+[GitHub release](../../releases) and check it first:
 
 ```sh
-cd android
-./gradlew assembleDebug testDebugUnitTest ktlintCheck lintDebug
-./gradlew :core:designsystem:recordRoborazziDebug   # design-system screenshots (slow; not part of normal test runs)
+sha256sum -c SHA256SUMS
+apksigner verify --print-certs whispr-<version>.apk   # compare with SIGNING-CERT.txt
 ```
 
-Create `android/local.properties` with `sdk.dir=...` if `ANDROID_HOME` is not set.
-JVM unit tests run on JDK 21 (libsignal's classes target Java 21); Gradle
-downloads it automatically if it isn't installed.
+The release build talks to the server it was built for. To use your own
+server, deploy it (`docs/DEPLOYMENT.md`) and build the app with your URL and
+certificate pins (`docs/SETUP.md`).
 
-Run the app against the local backend (emulator or USB phone):
+## Repository
+
+```
+android/   Kotlin + Jetpack Compose client (app, data, domain, design system)
+server/    Go backend: REST and one WebSocket, PostgreSQL, S3-compatible storage
+docs/      Architecture, threat model, security review, API, guides
+```
+
+Quick start for development:
 
 ```sh
-docker compose up -d
-adb reverse tcp:8080 tcp:8080     # the debug build talks to http://127.0.0.1:8080
-./gradlew installDebug
+docker compose up --build                       # local backend on 127.0.0.1:8080
+cd android && ./gradlew installDebug            # after: adb reverse tcp:8080 tcp:8080
 ```
 
-`adb reverse` is needed because Android 17 blocks local-network addresses
-(such as `10.0.2.2`) without a runtime permission. See docs/ARCHITECTURE.md.
+## Documentation
 
-On-device tests (Keystore, SQLCipher) and the live end-to-end test:
+| | |
+|---|---|
+| [Development setup](docs/SETUP.md) | Build, test and run locally; release builds |
+| [Deployment](docs/DEPLOYMENT.md) | Run a server with Docker Compose and Caddy |
+| [API](docs/API.md) | REST and WebSocket reference |
+| [Architecture](docs/ARCHITECTURE.md) | Layers, protocols, storage, testing |
+| [Threat model](docs/THREAT_MODEL.md) | Assets, adversaries, mitigations, known gaps |
+| [Security review](docs/SECURITY_REVIEW.md) | Findings for this release, ranked |
+| [Data retention](docs/DATA_RETENTION.md) | What is stored, where, and for how long |
+| [Roadmap](ROADMAP.md) | What comes next |
+| [Contributing](CONTRIBUTING.md) | How to help, and the rules every change follows |
+| [Security policy](SECURITY.md) | Reporting vulnerabilities privately |
+| [Designs](docs/designs/) | Design notes for each major feature |
+| [Failure log](docs/failures/) | Every build, test or tool failure hit during development |
 
-```sh
-./gradlew :data:connectedDebugAndroidTest
-WHISPR_SERVER_URL=http://127.0.0.1:8080/ ./gradlew :data:testDebugUnitTest
-```
+## Licence
 
-### Chatting between two devices
-
-Install the debug app on two emulators or phones, run `adb -s <device> reverse
-tcp:8080 tcp:8080` for each, and onboard both. On one phone open **My code**; on
-the other tap **New chat → Scan QR code** and scan it (or use **Scan from image**
-with a picture of it). The first person accepts the request, and you can chat.
-To verify each other, open a chat and tap the verify icon, then compare the
-numbers or scan each other's code.
-
-### Push (optional)
-
-Without Firebase configuration everything works while the app is open, and
-queued messages arrive when it next opens. To enable content-free wake-ups:
-
-1. Create a Firebase project and add an Android app with package `dev.whispr.android`.
-2. Create `android/firebase.properties` (git-ignored) from the values in the
-   downloaded `google-services.json`:
-   ```properties
-   app_id=1:1234567890:android:abcdef
-   api_key=AIza...
-   project_id=your-project
-   sender_id=1234567890
-   ```
-3. Create a service-account key with the "Firebase Cloud Messaging API Admin"
-   role, save it outside the repo, and start the server with
-   `FCM_CREDENTIALS_FILE=/path/to/key.json` (e.g. as a mounted secret in compose).
-
-## Docs
-
-- [Groups and media design](docs/designs/groups-and-media.md)
-- [MLS as a future option](docs/MLS.md)
-- [Failure log](docs/failures/): every build, test or tool failure hit during development
-- [Architecture](docs/ARCHITECTURE.md): layers, auth protocol, storage, testing
-- [Threat model](docs/THREAT_MODEL.md): assets, adversaries, mitigations, known gaps
+[AGPL-3.0](LICENSE). If you run a modified server for others, the AGPL
+requires you to offer them its source.

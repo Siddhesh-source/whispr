@@ -18,20 +18,8 @@
 
 ## Android: messaging features
 
-### P2: Replies
-- **What:**
-  - Add `Payload.Reply(mid, quotedMid, body)` (reactions are done: `Payload.Reaction`).
-  - Add the UI: swipe to reply and a quoted bubble.
-- **Why:**
-  - Brief item 5 ("encrypt text, replies, reactions, and receipts") assumes these features exist.
-  - Payload encryption is generic, so new kinds are encrypted automatically.
-- **Pros:** fills a real product gap. The `mid` from the encryption work makes quote and reaction references stable across resends.
-- **Cons:** needs design-system work (quoted bubble, reaction chips) and new UI tests.
-- **Context:**
-  - `Payload.kt` (sealed interface, JSON discriminator `t`).
-  - Design premise 5.
-  - Old clients drop unknown kinds (`PayloadCodec.decode` returns null).
-- **Depends on:** end-to-end encryption (the `mid` field).
+Replies, forwarding, deletion, disappearing messages and search shipped in
+0.1.0-beta.1 (see `docs/designs/security-polish-release.md`).
 
 ## Groups and media
 
@@ -61,3 +49,6 @@
 - **Before adding them:** decide whether to aggregate receipts (privacy: every member would learn when you read).
 
 ## Completed
+
+- **Replies** (P2): shipped with forwarding, delete for everyone, disappearing
+  messages and search in 0.1.0-beta.1.
