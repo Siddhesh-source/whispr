@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
@@ -48,6 +49,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -58,11 +61,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.window.Dialog
@@ -72,6 +78,7 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.whispr.android.R
 import dev.whispr.android.ui.FilterObscuredTouches
+import dev.whispr.android.ui.formatDay
 import dev.whispr.android.ui.formatTime
 import dev.whispr.core.designsystem.component.BubbleDirection
 import dev.whispr.core.designsystem.component.DeliveryStatus
@@ -83,6 +90,7 @@ import dev.whispr.core.designsystem.component.MessageInputBar
 import dev.whispr.core.designsystem.component.OfflineBanner
 import dev.whispr.core.designsystem.component.QuotePreview
 import dev.whispr.core.designsystem.component.ReactionChip
+import dev.whispr.core.designsystem.component.RecordingBar
 import dev.whispr.core.designsystem.component.SystemNotice
 import dev.whispr.core.designsystem.component.WarningCard
 import dev.whispr.core.designsystem.component.WhisprPrimaryButton
@@ -101,7 +109,12 @@ import dev.whispr.domain.model.MessageRules
 import dev.whispr.domain.model.MessageStatus
 import dev.whispr.domain.model.Quote
 import dev.whispr.domain.model.TrustState
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -156,6 +169,7 @@ fun ChatRoute(
         onSendMedia = viewModel::sendMedia,
         onReact = viewModel::react,
         onDismissError = viewModel::dismissError,
+        onError = viewModel::reportError,
         onGroupInfo = onGroupInfo,
         onAcceptInvite = viewModel::acceptInvite,
         onDeclineInvite = { viewModel.declineInvite(onBack) },
@@ -199,6 +213,7 @@ fun ChatScreen(
     onSendMedia: (uri: String, kind: AttachmentKind, fileName: String?, durationMs: Long?) -> Unit = { _, _, _, _ -> },
     onReact: (messageId: String, emoji: String?) -> Unit = { _, _ -> },
     onDismissError: () -> Unit = {},
+    onError: (ChatError) -> Unit = {},
     onGroupInfo: () -> Unit = {},
     onAcceptInvite: () -> Unit = {},
     onDeclineInvite: () -> Unit = {},
@@ -307,7 +322,7 @@ fun ChatScreen(
                     )
                     else -> Column {
                         state.replyingTo?.let { ReplyBar(it, state.peerName) { messageActions.onReply(null) } }
-                        Composer(state, onInput, onSend, onSendMedia)
+                        Composer(state, onInput, onSend, onSendMedia, onError)
                     }
                 }
             }
@@ -386,6 +401,8 @@ fun ChatScreen(
                             ChatError.Unreadable -> R.string.chat_error_unreadable
                             ChatError.NotAllowed -> R.string.chat_error_not_allowed
                             ChatError.DeleteFailed -> R.string.chat_error_delete_failed
+                            ChatError.MicDenied -> R.string.chat_error_mic_denied
+                            ChatError.MicUnavailable -> R.string.chat_error_mic_unavailable
                         },
                     ),
                 )
@@ -400,6 +417,7 @@ private fun Composer(
     onInput: (String) -> Unit,
     onSend: () -> Unit,
     onSendMedia: (String, AttachmentKind, String?, Long?) -> Unit,
+    onError: (ChatError) -> Unit,
 ) {
     val context = LocalContext.current
     val recorder = remember { VoiceRecorder(context) }
@@ -413,9 +431,30 @@ private fun Composer(
     val pickFile = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let { onSendMedia(it.toString(), AttachmentKind.File, null, null) }
     }
-    val startRecording = { recording = recorder.start() }
+    val haptics = LocalHapticFeedback.current
+    var elapsed by remember { mutableLongStateOf(0L) }
+    val levels = remember { mutableStateListOf<Float>() }
+    val startRecording = {
+        recording = recorder.start()
+        if (recording) {
+            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+        } else {
+            onError(ChatError.MicUnavailable)
+        }
+    }
     val askMic = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) startRecording()
+        if (granted) startRecording() else onError(ChatError.MicDenied)
+    }
+    // Drive the timer and level meter while the microphone is live.
+    LaunchedEffect(recording) {
+        levels.clear()
+        elapsed = 0L
+        while (recording && isActive) {
+            elapsed = recorder.elapsedMs
+            levels.add(recorder.level())
+            if (levels.size > MAX_LEVELS) levels.removeAt(0)
+            delay(LEVEL_TICK_MS)
+        }
     }
     val attach: @Composable () -> Unit = {
         Box {
@@ -453,33 +492,18 @@ private fun Composer(
             .padding(horizontal = WhisprTheme.spacing.md, vertical = WhisprTheme.spacing.sm),
     ) {
         if (recording) {
-            Surface(
-                shape = MaterialTheme.shapes.large,
-                color = WhisprTheme.colors.dangerSoft,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Row(
-                    Modifier.padding(start = WhisprTheme.spacing.lg, end = WhisprTheme.spacing.xs),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        stringResource(R.string.chat_recording),
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = WhisprTheme.colors.danger,
-                        modifier = Modifier.weight(1f),
-                    )
-                    IconButton(onClick = {
-                        recording = false
-                        recorder.stop()?.let { r -> onSendMedia(r.uri, AttachmentKind.Voice, null, r.durationMs) }
-                    }) {
-                        Icon(
-                            WhisprIcons.Stop,
-                            contentDescription = stringResource(R.string.chat_record_stop),
-                            tint = WhisprTheme.colors.danger,
-                        )
-                    }
-                }
-            }
+            RecordingBar(
+                elapsedMs = elapsed,
+                levels = levels,
+                onCancel = {
+                    recording = false
+                    recorder.cancel()
+                },
+                onSend = {
+                    recording = false
+                    recorder.stop()?.let { r -> onSendMedia(r.uri, AttachmentKind.Voice, null, r.durationMs) }
+                },
+            )
         } else {
             MessageInputBar(
                 value = state.input,
@@ -504,6 +528,9 @@ private fun Composer(
         }
     }
 }
+
+private const val MAX_LEVELS = 64
+private const val LEVEL_TICK_MS = 80L
 
 /**
  * Shown under the header only while disappearing messages are on (they are
@@ -553,46 +580,106 @@ private fun MessageList(
     // Newest at the bottom; follow new messages.
     LaunchedEffect(items.size) { if (items.isNotEmpty()) listState.animateScrollToItem(items.lastIndex) }
     val spacing = WhisprTheme.spacing
+    // Anchored to the bottom like the composer: a short thread sits just above
+    // it instead of hanging from the header. Spacing (DESIGN.md "Layout"): 2dp
+    // inside a run, 12dp between runs, day dividers between days.
     LazyColumn(
         state = listState,
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(horizontal = spacing.md, vertical = spacing.sm),
-        verticalArrangement = Arrangement.spacedBy(spacing.xxs),
+        contentPadding = PaddingValues(horizontal = spacing.md, vertical = spacing.md),
+        verticalArrangement = Arrangement.Bottom,
     ) {
-        items(items, key = { it.message.id + it.message.author?.value.orEmpty() }) { item ->
+        itemsIndexed(items, key = { _, it -> it.message.id + it.message.author?.value.orEmpty() }) { index, item ->
             val m = item.message
-            if (m.system) {
-                SystemNotice(m.text)
-                return@items
+            val top = when {
+                index == 0 -> spacing.xxs
+                item.newDay -> spacing.lg
+                m.system || item.position.startsRun() -> spacing.md
+                else -> spacing.xxs
             }
-            val attachment = m.attachment.takeIf { !m.deleted }
-            MessageBubble(
-                text = when {
-                    m.deleted -> stringResource(R.string.chat_deleted)
-                    m.notice != null -> stringResource(m.notice!!.labelRes())
-                    else -> m.text
-                },
-                time = formatTime(m.timestamp),
-                direction = if (m.outgoing) BubbleDirection.Outgoing else BubbleDirection.Incoming,
-                senderName = if (m.outgoing) null else m.authorName ?: peerName,
-                showSender = isGroup && item.position.startsRun(),
-                groupPosition = item.position,
-                status = m.status?.toDeliveryStatus(),
-                onRetry = { onRetry(m.id) },
-                notice = m.notice != null || m.deleted,
-                attachment = attachment?.let { a -> { AttachmentView(m.id, a, attachments) } },
-                reactions = m.reactions.map { ReactionChip(it.emoji, it.count, it.mine) },
-                onActions = if (m.notice == null) ({ onLongPress(m) }) else null,
-                quote = m.quote?.takeIf { !m.deleted }?.let { quotePreview(it, peerName) },
-                forwarded = m.forwarded && !m.deleted,
-                expiring = m.expiresIn != null && !m.deleted,
-                onReactionClick = { emoji ->
-                    val mine = m.reactions.firstOrNull { it.mine }?.emoji
-                    onReact(m.id, if (mine == emoji) null else emoji)
-                },
+            Column(Modifier.padding(top = top)) {
+                if (item.newDay) DayDivider(m.timestamp)
+                if (m.system) {
+                    SystemNotice(
+                        m.text,
+                    )
+                } else {
+                    Bubble(item, peerName, isGroup, onRetry, onLongPress, onReact, attachments)
+                }
+            }
+        }
+    }
+}
+
+/** A centred, quiet date label between days: "Today", "Yesterday", or the date. */
+@Composable
+private fun DayDivider(at: Instant) {
+    val zone = ZoneId.systemDefault()
+    val day = at.atZone(zone).toLocalDate()
+    val today = LocalDate.now(zone)
+    val label = when (day) {
+        today -> stringResource(R.string.chat_day_today)
+        today.minusDays(1) -> stringResource(R.string.chat_day_yesterday)
+        else -> formatDay(day)
+    }
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .padding(bottom = WhisprTheme.spacing.md),
+        contentAlignment = Alignment.Center,
+    ) {
+        Surface(
+            shape = MaterialTheme.shapes.small,
+            color = WhisprTheme.colors.sunken,
+            contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.semantics { heading() },
+        ) {
+            Text(
+                label,
+                style = MaterialTheme.typography.labelSmall,
+                modifier = Modifier.padding(horizontal = WhisprTheme.spacing.sm, vertical = WhisprTheme.spacing.xxs),
             )
         }
     }
+}
+
+@Composable
+private fun Bubble(
+    item: BubbleItem,
+    peerName: String,
+    isGroup: Boolean,
+    onRetry: (String) -> Unit,
+    onLongPress: (Message) -> Unit,
+    onReact: (String, String?) -> Unit,
+    attachments: AttachmentActions,
+) {
+    val m = item.message
+    val attachment = m.attachment.takeIf { !m.deleted }
+    MessageBubble(
+        text = when {
+            m.deleted -> stringResource(R.string.chat_deleted)
+            m.notice != null -> stringResource(m.notice!!.labelRes())
+            else -> m.text
+        },
+        time = formatTime(m.timestamp),
+        direction = if (m.outgoing) BubbleDirection.Outgoing else BubbleDirection.Incoming,
+        senderName = if (m.outgoing) null else m.authorName ?: peerName,
+        showSender = isGroup && item.position.startsRun(),
+        groupPosition = item.position,
+        status = m.status?.toDeliveryStatus(),
+        onRetry = { onRetry(m.id) },
+        notice = m.notice != null || m.deleted,
+        attachment = attachment?.let { a -> { AttachmentView(m.id, a, attachments) } },
+        reactions = m.reactions.map { ReactionChip(it.emoji, it.count, it.mine) },
+        onActions = if (m.notice == null) ({ onLongPress(m) }) else null,
+        quote = m.quote?.takeIf { !m.deleted }?.let { quotePreview(it, peerName) },
+        forwarded = m.forwarded && !m.deleted,
+        expiring = m.expiresIn != null && !m.deleted,
+        onReactionClick = { emoji ->
+            val mine = m.reactions.firstOrNull { it.mine }?.emoji
+            onReact(m.id, if (mine == emoji) null else emoji)
+        },
+    )
 }
 
 private fun dev.whispr.core.designsystem.component.BubbleGroupPosition.startsRun() =

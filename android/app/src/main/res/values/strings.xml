@@ -197,8 +197,10 @@
     <string name="chat_attach_photo">Photo</string>
     <string name="chat_attach_file">File</string>
     <string name="chat_record">Record a voice message</string>
-    <string name="chat_record_stop">Stop and send</string>
-    <string name="chat_recording">Recording…</string>
+    <string name="chat_error_mic_denied">Whispr needs microphone access to record a voice message. You can allow it in the phone\'s settings.</string>
+    <string name="chat_error_mic_unavailable">Couldn\'t start the microphone. Another app may be using it.</string>
+    <string name="chat_day_today">Today</string>
+    <string name="chat_day_yesterday">Yesterday</string>
     <string name="chat_voice_play">Play voice message</string>
     <string name="chat_voice_pause">Pause</string>
     <string name="chat_voice_label">Voice message, %1$s</string>

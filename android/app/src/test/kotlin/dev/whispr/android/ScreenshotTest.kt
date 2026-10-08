@@ -1,6 +1,11 @@
 package dev.whispr.android
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.github.takahirom.roborazzi.captureRoboImage
 import dev.whispr.android.ui.chat.ChatContent
@@ -30,6 +35,7 @@ import dev.whispr.android.ui.settings.SettingsUiState
 import dev.whispr.android.ui.verify.VerifyContent
 import dev.whispr.android.ui.verify.VerifyScreen
 import dev.whispr.android.ui.verify.VerifyUiState
+import dev.whispr.core.designsystem.component.RecordingBar
 import dev.whispr.core.designsystem.theme.WhisprTheme
 import dev.whispr.domain.model.Contact
 import dev.whispr.domain.model.ConversationId
@@ -73,6 +79,17 @@ class ScreenshotTest {
     @Test fun chatDark() = capture("chat_dark", dark = true) { chat(timer = 0) }
 
     @Test fun chatDisappearing() = capture("chat_disappearing_light") { chat(timer = DAY) }
+
+    @Test fun recordingLight() = capture("recording_light") {
+        Box(Modifier.background(MaterialTheme.colorScheme.background).padding(WhisprTheme.spacing.md)) {
+            RecordingBar(
+                elapsedMs = 7_400,
+                levels = List(48) { i -> ((i * 37) % 11) / 10f },
+                onCancel = {},
+                onSend = {},
+            )
+        }
+    }
 
     @Test fun settingsLight() = capture("settings_light") { settings() }
 

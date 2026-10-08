@@ -22,7 +22,9 @@ import dev.whispr.domain.repository.ConnectivityRepository
 import dev.whispr.domain.repository.ContactsRepository
 import dev.whispr.domain.repository.GroupsRepository
 import dev.whispr.domain.repository.MessagingRepository
+import java.time.Duration
 import java.time.Instant
+import java.time.ZoneId
 import javax.inject.Inject
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -37,7 +39,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
-data class BubbleItem(val message: Message, val position: BubbleGroupPosition)
+data class BubbleItem(val message: Message, val position: BubbleGroupPosition, val newDay: Boolean = false)
 
 sealed interface ChatContent {
     data object Loading : ChatContent
@@ -46,7 +48,7 @@ sealed interface ChatContent {
 }
 
 /** Why a send, forward or delete was refused, shown once as a message. */
-enum class ChatError { TooLarge, Unreadable, NotAllowed, DeleteFailed }
+enum class ChatError { TooLarge, Unreadable, NotAllowed, DeleteFailed, MicDenied, MicUnavailable }
 
 data class ChatUiState(
     val peerName: String = "",
@@ -217,6 +219,11 @@ class ChatViewModel @Inject constructor(
         }
     }
 
+    /** A failure the screen detected itself (the microphone), shown like any other. */
+    fun reportError(e: ChatError) {
+        error.value = e
+    }
+
     fun dismissError() {
         error.value = null
     }
@@ -326,16 +333,35 @@ class ChatViewModel @Inject constructor(
     }
 }
 
-/** Consecutive messages from the same author form a visual group; group events stand alone. */
-internal fun group(messages: List<Message>): List<BubbleItem> = messages.mapIndexed { i, m ->
-    fun same(o: Message?) = o != null && !o.system && !m.system && o.outgoing == m.outgoing && o.author == m.author
-    val sameAsPrev = same(messages.getOrNull(i - 1))
-    val sameAsNext = same(messages.getOrNull(i + 1))
-    val position = when {
-        sameAsPrev && sameAsNext -> BubbleGroupPosition.Middle
-        sameAsPrev -> BubbleGroupPosition.Last
-        sameAsNext -> BubbleGroupPosition.First
-        else -> BubbleGroupPosition.Single
+/**
+ * Consecutive messages from the same author form a visual run; a run also ends
+ * after a pause of [RUN_BREAK] or at midnight. Group events stand alone.
+ * [BubbleItem.newDay] marks the first message of each local day, which gets a
+ * day divider above it.
+ */
+internal fun group(messages: List<Message>, zone: ZoneId = ZoneId.systemDefault()): List<BubbleItem> {
+    val days = messages.map { it.timestamp.atZone(zone).toLocalDate() }
+    fun joins(a: Int, b: Int): Boolean {
+        val x = messages.getOrNull(a) ?: return false
+        val y = messages.getOrNull(b) ?: return false
+        return !x.system &&
+            !y.system &&
+            x.outgoing == y.outgoing &&
+            x.author == y.author &&
+            days[a] == days[b] &&
+            Duration.between(x.timestamp, y.timestamp) <= RUN_BREAK
     }
-    BubbleItem(m, position)
+    return messages.mapIndexed { i, m ->
+        val sameAsPrev = joins(i - 1, i)
+        val sameAsNext = joins(i, i + 1)
+        val position = when {
+            sameAsPrev && sameAsNext -> BubbleGroupPosition.Middle
+            sameAsPrev -> BubbleGroupPosition.Last
+            sameAsNext -> BubbleGroupPosition.First
+            else -> BubbleGroupPosition.Single
+        }
+        BubbleItem(m, position, newDay = i == 0 || days[i] != days[i - 1])
+    }
 }
+
+private val RUN_BREAK: Duration = Duration.ofMinutes(5)

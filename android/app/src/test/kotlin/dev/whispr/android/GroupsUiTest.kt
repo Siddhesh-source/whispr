@@ -231,6 +231,22 @@ class GroupsUiTest {
         )
     }
 
+    @Test
+    fun runsBreakAfterAPauseAndDaysAreMarked() {
+        val t = Instant.parse("2026-01-01T10:00:00Z")
+        val items = group(
+            listOf(
+                msg("a").copy(timestamp = t),
+                msg("b").copy(timestamp = t.plusSeconds(60)),
+                msg("c").copy(timestamp = t.plusSeconds(60 * 20)),
+                msg("d").copy(timestamp = t.plusSeconds(60 * 60 * 24)),
+            ),
+            java.time.ZoneOffset.UTC,
+        )
+        assertEquals(listOf("First", "Last", "Single", "Single"), items.map { it.position.name })
+        assertEquals(listOf(true, false, false, true), items.map { it.newDay })
+    }
+
     // ---- Screens ----
 
     private fun chat(

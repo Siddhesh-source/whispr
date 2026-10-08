@@ -171,8 +171,11 @@ body 14.5 / meta 12.5. Levels differ by size and weight, never weight alone.
   column (76dp inset), not at the screen edge.
 - Settings are grouped in `surface` panels with 16dp radius and hairline
   borders, under small muted section labels.
-- Conversation: 4dp between bubbles in a run, 10dp between runs; the composer
-  and top bar are separated from the thread by hairlines, not elevation.
+- Conversation: the thread is anchored to the composer (a short chat sits at
+  the bottom, not under the header). 2dp between bubbles in a run, 12dp
+  between runs, 16dp before a day divider. A run is one author's messages
+  with no pause over 5 minutes and no midnight in between. Day dividers are a
+  small `sunken` label: "Today", "Yesterday", or the date.
 
 ## Elevation & Depth
 
@@ -208,6 +211,11 @@ badges). No pill-shaped buttons. Nested radius = outer radius − gap.
   [time]". Nothing about verification.
 - **Composer:** one bordered bar (16dp radius) holding attach, the field, the
   mic while empty, and the square send button.
+- **Recording bar:** replaces the composer while the microphone is live:
+  discard, a pulsing `danger` dot (the one non-danger use of red: a live
+  microphone), elapsed time in tabular figures, a moss level meter, and the
+  square send that stops and sends. A failure to start the microphone is
+  shown as an error, never silently ignored.
 - **Verified seal:** a 15dp amber seal glyph after the contact name. It appears
   only when the safety number has been compared.
 - **Unread badge:** amber with ink text. It is the only colored element in a

@@ -20,5 +20,11 @@ fun formatTimestamp(
 /** Localized short time, for message bubbles. */
 fun formatTime(instant: Instant, zone: ZoneId = ZoneId.systemDefault()): String = TIME.format(instant.atZone(zone))
 
+/** Localized date for a day divider, without the year when it is this year. */
+fun formatDay(day: LocalDate, today: LocalDate = LocalDate.now()): String =
+    (if (day.year == today.year) DAY else DAY_YEAR).format(day)
+
 private val TIME: DateTimeFormatter = DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT)
 private val DATE: DateTimeFormatter = DateTimeFormatter.ofLocalizedDate(FormatStyle.SHORT)
+private val DAY: DateTimeFormatter = DateTimeFormatter.ofPattern("EEE, d MMM")
+private val DAY_YEAR: DateTimeFormatter = DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM)

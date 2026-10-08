@@ -24,6 +24,18 @@ class VoiceRecorder(private val context: Context) {
 
     val isRecording: Boolean get() = recorder != null
 
+    val elapsedMs: Long get() = if (recorder != null) SystemClock.elapsedRealtime() - startedAt else 0L
+
+    /** Input level since the last call, 0..1, on a square-root curve so quiet speech still shows. */
+    fun level(): Float {
+        val amp = try {
+            recorder?.maxAmplitude ?: 0
+        } catch (_: IllegalStateException) {
+            0
+        }
+        return kotlin.math.sqrt(amp / MAX_AMPLITUDE).coerceIn(0f, 1f)
+    }
+
     fun start(): Boolean {
         val dir = File(context.cacheDir, "voice").apply { mkdirs() }
         val target = File(dir, UUID.randomUUID().toString() + ".m4a")
@@ -88,6 +100,7 @@ class VoiceRecorder(private val context: Context) {
         const val SAMPLE_RATE = 44_100
         const val MAX_DURATION_MS = 10 * 60_000
         const val MIN_DURATION_MS = 500L
+        const val MAX_AMPLITUDE = 32_767f
     }
 }
 

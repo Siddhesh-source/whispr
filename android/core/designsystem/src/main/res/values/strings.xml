@@ -35,4 +35,8 @@
     <string name="ds_forwarded">Forwarded</string>
     <string name="ds_quote">Replying to %1$s: %2$s</string>
     <string name="ds_disappearing">Disappearing message</string>
+
+    <string name="ds_recording">Recording voice message, %1$s</string>
+    <string name="ds_recording_cancel">Discard recording</string>
+    <string name="ds_recording_send">Stop and send</string>
 </resources>
