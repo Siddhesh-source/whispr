@@ -33,3 +33,6 @@ android/firebase.properties
 *service-account*.json
 secrets/
 __pycache__/
+
+# Release signing (never commit)
+android/keystore.properties

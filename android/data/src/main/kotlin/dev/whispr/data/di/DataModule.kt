@@ -11,6 +11,7 @@ import dagger.hilt.components.SingletonComponent
 import dev.whispr.data.account.AvatarStore
 import dev.whispr.data.account.RoomAccountRepository
 import dev.whispr.data.account.asImporter
+import dev.whispr.data.auth.DeviceWipe
 import dev.whispr.data.auth.SessionAuthRepository
 import dev.whispr.data.auth.TokenSource
 import dev.whispr.data.connectivity.AndroidConnectivityRepository
@@ -37,6 +38,7 @@ import dev.whispr.data.network.AuthApi
 import dev.whispr.data.network.KeysApi
 import dev.whispr.data.network.MediaApi
 import dev.whispr.data.network.ServerConfig
+import dev.whispr.data.network.TlsPolicy
 import dev.whispr.data.network.WhisprApi
 import dev.whispr.data.profile.RoomProfileRepository
 import dev.whispr.domain.repository.AccountRepository
@@ -58,6 +60,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 
 @Qualifier
@@ -82,11 +85,11 @@ object DataModule {
     // does not affect the other.
     @Provides @Singleton @IdentityStore
     fun identityStore(@ApplicationContext context: Context) =
-        SecretFileStore(secretsDir(context), AndroidKeystoreKeyWrapper("whispr.identity.wrap.v1"))
+        SecretFileStore(secretsDir(context), AndroidKeystoreKeyWrapper(IDENTITY_ALIAS))
 
     @Provides @Singleton @DatabaseKeyStore
     fun databaseKeyStore(@ApplicationContext context: Context) =
-        SecretFileStore(secretsDir(context), AndroidKeystoreKeyWrapper("whispr.database.wrap.v1"))
+        SecretFileStore(secretsDir(context), AndroidKeystoreKeyWrapper(DATABASE_ALIAS))
 
     @Provides @Singleton
     fun libsignalIdentity(@IdentityStore store: SecretFileStore) = LibsignalIdentityRepository(store, Dispatchers.IO)
@@ -112,7 +115,7 @@ object DataModule {
         )
 
     @Provides @Singleton
-    fun okHttp(): OkHttpClient = OkHttpClient.Builder()
+    fun okHttp(config: ServerConfig): OkHttpClient = TlsPolicy.apply(OkHttpClient.Builder(), config)
         .connectTimeout(TIMEOUT_SECONDS, TimeUnit.SECONDS)
         .readTimeout(TIMEOUT_SECONDS, TimeUnit.SECONDS)
         .writeTimeout(TIMEOUT_SECONDS, TimeUnit.SECONDS)
@@ -122,8 +125,16 @@ object DataModule {
     fun authApi(client: OkHttpClient, config: ServerConfig) = AuthApi(client, config)
 
     @Provides @Singleton
-    fun sessionAuthRepository(api: AuthApi, identity: IdentityRepository, accounts: AccountRepository) =
-        SessionAuthRepository(api, identity, accounts)
+    fun sessionAuthRepository(
+        @ApplicationContext context: Context,
+        api: AuthApi,
+        identity: IdentityRepository,
+        accounts: AccountRepository,
+        db: WhisprDatabase,
+    ): SessionAuthRepository {
+        val wipe = DeviceWipe(context, db, listOf(IDENTITY_ALIAS, DATABASE_ALIAS))
+        return SessionAuthRepository(api, identity, accounts, wipe = { withContext(Dispatchers.IO) { wipe.wipe() } })
+    }
 
     @Provides
     fun authRepository(impl: SessionAuthRepository): AuthRepository = impl
@@ -263,6 +274,8 @@ object DataModule {
     private fun secretsDir(context: Context) = File(context.noBackupFilesDir, "secrets")
 
     private const val TIMEOUT_SECONDS = 15L
+    private const val IDENTITY_ALIAS = "whispr.identity.wrap.v1"
+    private const val DATABASE_ALIAS = "whispr.database.wrap.v1"
 
     private val cryptoDispatcher = Executors.newSingleThreadExecutor {
         Thread(it, "whispr-crypto")

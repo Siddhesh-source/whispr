@@ -21,7 +21,11 @@ annotation class ApplicationScope
 @InstallIn(SingletonComponent::class)
 object AppModule {
     @Provides @Singleton
-    fun serverConfig() = ServerConfig(BuildConfig.SERVER_URL)
+    fun serverConfig(): ServerConfig {
+        // The release build script already refuses a non-HTTPS URL; this guards hand-edited builds.
+        check(BuildConfig.DEBUG || BuildConfig.SERVER_URL.startsWith("https://")) { "release builds need HTTPS" }
+        return ServerConfig(BuildConfig.SERVER_URL, BuildConfig.CERT_PINS.split(',').filter { it.isNotBlank() })
+    }
 
     @Provides @InsecureLoopbackAllowed
     fun insecureLoopbackAllowed(): Boolean = BuildConfig.DEBUG
