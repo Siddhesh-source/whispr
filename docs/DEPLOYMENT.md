@@ -292,6 +292,23 @@ ISRG Root X1, ISRG Root X2, Root YE and Root YR
 (`WHISPR_CERT_PINS` repository variable). Checked against the live server
 with the app's `TlsPolicy`: the pins are accepted and wrong pins are refused.
 
+**Calls (TURN).** coturn runs beside the server on the host network
+(`coturn/coturn:4.18-alpine`, 64 MB cap) so phones that can't reach each
+other directly can still call. It listens on UDP and TCP 3478 and relays
+on UDP 49160–49200; open those in the security group. The deploy script
+generates `TURN_SECRET` in `.env` on the host and sets
+`TURN_EXTERNAL_IP=<public>/<private>` from instance metadata on every
+deploy (EC2 only sees its private address). The server hands out
+10-minute credentials signed with the same secret (`GET /v1/calls/turn`).
+
+Bandwidth: data out of EC2 is free up to 100 GB a month. Most calls
+connect directly and use none. A relayed voice call is about 50 KB/s; each
+relay session is capped at 600 KB/s (`max-bps`) and the relay at 40
+sessions, so even sustained relaying can't run far past the free amount
+unnoticed. Check usage under Billing → Free tier, or `docker compose logs
+coturn | grep -c allocation`. The relay refuses to forward to private,
+loopback, link-local and metadata addresses.
+
 It downloads the latest arm64 image artifact, copies it and the config to
 `/srv/whispr`, generates `.env` secrets on the host the first time, and runs
 `docker compose up -d`. SSH is open only to the maintainer's address in the

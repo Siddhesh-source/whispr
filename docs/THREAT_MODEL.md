@@ -336,6 +336,46 @@ logout and deletion requests themselves.
 | Tapjacking a security confirmation | Verify, key-change acknowledgement and delete account ignore touches while obscured | Done |
 | Rate limits shared by everyone behind the proxy | `TRUSTED_PROXIES`; `X-Forwarded-For` read only from them, rightmost untrusted hop | Done, tested |
 
+## Camera, GIFs, status and calls (beta.2)
+
+Design: `docs/designs/camera-gifs-status-calls.md`.
+
+### What the server learns
+
+- **Status:** one encrypted upload per photo status, then one small
+  envelope per contact (it learns your contact count and when you post, as
+  it already learns who you message). Every viewer downloads the same blob
+  ID, so the server can group the people who viewed one photo.
+- **Calls:** call signaling is ordinary encrypted envelopes. When a call
+  goes through the relay, coturn sees both phones' IP addresses, the time
+  and the amount of (encrypted) media, and the TURN username carries your
+  account ID. A direct call reveals each side's IP address to the other;
+  "Relay calls through the server" hides it, at the cost of the server
+  seeing those addresses instead.
+- **GIFs and camera:** nothing new: they are image attachments.
+
+### Threats and mitigations
+
+| Threat | Mitigation | Status |
+|---|---|---|
+| A server or network attacker joins or listens to a call | Media is DTLS-SRTP; the DTLS fingerprints are in the SDP, which travels only inside libsignal-encrypted payloads between pinned identities. A swapped certificate fails the handshake | Done (WebRTC is the first protocol crypto outside libsignal; documented in ARCHITECTURE) |
+| Strangers ring you or post to your Status | Calls and statuses are accepted only from accepted, visible contacts whose key hasn't changed | Done, tested |
+| A late offer rings long after the caller gave up | Rings only if the server accepted it in the last 45 s (server clock, not the sender's); older offers become missed calls | Done, tested |
+| Status kept past 24 hours | Receivers clamp the start time to their own clock and delete at 24 h, with the photo blob; queued fan-out older than 24 h is dropped | Done, tested |
+| Someone deletes another person's status | `status_delete` only removes the sender's own status | Done, tested |
+| Viewing a status reveals you read it | No view receipts are sent | By design |
+| GIF or WebP metadata (XMP, EXIF, comments) leaks location or software | Sent byte for byte but rebuilt block by block, keeping only what draws the frames; malformed files are refused | Done, tested |
+| Camera photo keeps EXIF | Re-encoded like any picked photo; the temp file is deleted after encryption | Done |
+| The relay used to reach internal services | coturn denies private, loopback, link-local and metadata peers | Done |
+| Relay bandwidth exhausts the free tier | Per-session and total caps | Done |
+| TURN credentials reused | Valid 10 minutes, bound to the account | Done |
+
+### Accepted limitations
+
+- Without push configured, a phone rings only while Whispr is connected.
+- Group calls are not supported.
+- Status goes to all accepted contacts; there are no per-contact lists yet.
+
 ## Review triggers
 
 Revisit this document whenever we add or change: anything stored on the

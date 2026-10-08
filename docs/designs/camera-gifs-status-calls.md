@@ -1,6 +1,6 @@
 # Camera, GIFs, Status and Calls
 
-Status: plan (2026-10-09). Scope: four user-facing features for 0.1.0-beta.2.
+Status: implemented (2026-10-09). Section 8's review decisions override the earlier sections where they differ. Scope: four user-facing features for 0.1.0-beta.2.
 Every decision below is made; alternatives are listed only where the choice
 changes privacy, cost or complexity.
 
@@ -185,7 +185,7 @@ Payload.CallHangup(cid, reason: "hangup" | "decline" | "busy" | "timeout" | "err
 
 ### Deployment (free tier)
 
-- coturn (`coturn/coturn:4.6-alpine`, 32 MB limit) on the host network:
+- coturn (`coturn/coturn:4.18-alpine`, 64 MB limit) on the host network:
   UDP/TCP 3478, relay ports UDP 49160–49200 (41 ports: enough concurrent
   relayed calls for a beta, small enough to reason about).
 - `use-auth-secret`, `static-auth-secret=$TURN_SECRET`, `realm=$WHISPR_HOST`,

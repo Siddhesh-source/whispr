@@ -9,7 +9,10 @@ messaging, QR contacts and verification, end-to-end encryption, and encrypted gr
 - No ads, tracking, feeds, channels, or phone numbers.
 - **All protocol cryptography comes from [libsignal](https://github.com/signalapp/libsignal).**
   No custom crypto. The only non-libsignal crypto is platform storage
-  encryption (AndroidKeyStore AES-GCM, SQLCipher) and hashing of opaque tokens.
+  encryption (AndroidKeyStore AES-GCM, SQLCipher), hashing of opaque tokens,
+  and call media: WebRTC's DTLS-SRTP, whose certificate fingerprints travel
+  only inside libsignal-encrypted signaling, so the media key exchange is
+  bound to the pinned identities (the approach Signal's calls take).
 - The server treats message bodies as opaque bytes and keeps only the
   metadata needed for delivery.
 - No plaintext content or key material in logs, push payloads, or analytics.
@@ -28,6 +31,7 @@ server/                  Go service
   internal/auth/         Registration, challenge-response, tokens
   internal/messaging/    WebSocket gateway, opaque envelope store and relay (1:1 and group fan-out)
   internal/attachments/  Encrypted attachment blobs in S3-compatible storage, retention janitor
+  internal/calls/        Short-lived TURN credentials for the call relay (coturn)
   internal/contacts/     User lookup by ID (used after scanning a QR)
   internal/profile/      Display name, optional usernames (name.42) and lookup
   internal/push/         Push token registration, content-free FCM wake-ups
@@ -569,6 +573,71 @@ default) and Delete account.
 | Data | `MessagingEngineTest.tokenExpiryCloseDropsTheTokenAndReconnects`; `TlsPolicyTest`; `SessionAuthRepositoryTest` delete flow; `AuthMessagesTest.deleteVector` |
 | App (Robolectric) | `MessageActionsUiTest`: action sheet, rendering, reply, timers, search, settings, delete confirmation |
 | Server | `security_test.go`, `revoke_test.go`, `server_test.go` route walk; `load_test.go` (opt-in) |
+
+## Camera, GIFs, status and calls (beta.2)
+
+Design and review: `docs/designs/camera-gifs-status-calls.md`.
+
+### Camera and GIFs
+
+- **Camera:** the system camera writes to `cache/camera/` through the
+  FileProvider; the file goes through the normal image path (re-encoded,
+  EXIF gone) and is deleted after encryption. CAMERA must be granted first
+  because the app declares it.
+- **GIFs:** from the keyboard (`Modifier.contentReceiver` on a
+  `TextFieldState` field), the picker or a paste. `AnimatedImages` keeps the
+  bytes but rebuilds GIF and animated-WebP files without comments, XMP or
+  EXIF; malformed files are refused; at most 10 MiB. They travel as
+  `kind = image` with an animated content type and play with
+  `AnimatedImageDrawable` (API 28+, and only while system animations are on).
+
+### Outbox priority (Room v7)
+
+`outbox.priority`: 0 call signaling, 1 messages and controls, 2 status
+fan-out; the pump sends `ORDER BY priority, seq`. Status entries older than
+24 h are dropped instead of sent.
+
+### Status
+
+```
+ post ─▶ [photo: seal + upload once] ─▶ tx{ statuses row + one outbox row per contact (prio 2) }
+ receive ─▶ decrypt tx{ accepted contact? ts within 24 h ± 1 h? new (author, sid)? ─▶ statuses row }
+ sweep (every minute) ─▶ delete expired rows and their blob files
+```
+
+`RoomStatusRepository` owns posting, retry, delete (`status_delete` to the
+same audience), viewing (local only) and photo download (verified against
+the digest, stored encrypted). The audience is every contact that is
+accepted, visible and not key-changed.
+
+### Calls
+
+```
+ CallManager (state machine, one call)          WebRtcCallMedia (libwebrtc)
+   start/accept/decline/hangup ──────────────▶   offer/answer/ICE, DTLS-SRTP
+   signals ◀─▶ CallSignalingRepository ◀─▶ outbox (prio 0) / engine.calls
+   CallLogRepository (Room `calls`)
+ CallSystem: ring notification (CallStyle, full-screen when allowed),
+   CallService (foreground: microphone|camera), CallAudio (mode, speaker,
+   ringback, proximity), missed-call notification
+```
+
+- Offers ring only if the server accepted them within 45 s; otherwise they
+  are logged as missed. Calls and statuses are accepted only from trusted
+  contacts. Busy and glare (lower call ID wins) are handled.
+- The engine stays connected while a call exists (`setCallActive`).
+- ICE servers come from `GET /v1/calls/turn`; "Relay calls through the
+  server" sets `iceTransportsType = RELAY`.
+- Without FCM, a phone rings only while the app is connected.
+
+### Testing
+
+| Where | What |
+|---|---|
+| Data (JVM, real libsignal, `FakeRelay`) | `StatusAndCallsTest`: text and photo statuses, one blob for all, retry after a failed upload, author-only delete, strangers and stale statuses dropped, expiry sweep, priority ordering and stale drop, call signals in order with server time, strangers can't ring |
+| Data (JVM) | `AnimatedImagesTest`: metadata stripped, loop kept, every truncation refused |
+| App (JVM) | `CallManagerTest`: outgoing, incoming, timeouts, decline, busy, missed, stale offers, glare, failures, relay setting; `StatusCallsUiTest`; Roborazzi screenshots |
+| Server | `calls_test.go`: credential scheme, TTL, 503, per-user limit; config validation |
 
 ## Planned next (not built)
 

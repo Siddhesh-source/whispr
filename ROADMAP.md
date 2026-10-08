@@ -17,6 +17,14 @@ Each item names the gap it closes (see `docs/THREAT_MODEL.md` and
 - No phone number, e-mail or password. No trackers.
 - Self-hostable server with a deployment guide; signed APK releases.
 
+## Now: 0.1 beta.2
+
+- Camera photos and GIFs (keyboard, picker; metadata stripped).
+- Status: 24-hour text and photo updates for your contacts, no view receipts.
+- One-to-one voice and video calls (WebRTC, signaling end-to-end encrypted,
+  a TURN relay on the server, optional relay-only mode that hides your IP).
+- Chats, Status and Calls tabs.
+
 ## Next: 0.2
 
 - **App lock** (biometric or PIN), for unlocked stolen phones (M6).
@@ -38,11 +46,13 @@ Each item names the gap it closes (see `docs/THREAT_MODEL.md` and
 - **Encrypted backups** that never hand key material to the server.
 - **Horizontal scaling**: shared rate limits and presence so the server can
   run more than one instance.
-- **Voice and video calls.**
+- **Group calls** (need a media server).
+- **Status audiences** (choose who sees your status).
 - **MLS for large groups** (`docs/MLS.md`), if group sizes outgrow sender keys.
 - **Reproducible builds** and F-Droid distribution.
 
 ## Not planned
 
-Ads, analytics, feeds, stories, contact-list upload, cloud message history in
-readable form.
+Ads, analytics, feeds, public stories or channels, contact-list upload, cloud
+message history in readable form. (Status updates go only to your accepted
+contacts, end-to-end encrypted, and vanish after 24 hours.)

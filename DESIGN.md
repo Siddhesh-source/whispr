@@ -216,6 +216,18 @@ badges). No pill-shaped buttons. Nested radius = outer radius − gap.
   microphone), elapsed time in tabular figures, a moss level meter, and the
   square send that stops and sends. A failure to start the microphone is
   shown as an error, never silently ignored.
+- **Bottom bar:** Chats, Status, Calls on `surface` with a hairline above;
+  the selected icon is moss on a mint indicator. The amber badge is unread
+  messages only; unseen statuses get a small moss dot.
+- **Status:** rows like chat rows, with a 2dp ring around the avatar: moss
+  while something is unseen, hairline once viewed. Text statuses sit on one
+  of six deep backgrounds (moss, teal, umber, plum, slate, rust) with light
+  text in the display face; the viewer has thin progress segments at the top.
+- **Calls:** the call screen is always dark (`callGround`), with the
+  contact's initials or their video, the state in one line (tabular time),
+  round `callControl` toggles and round accept (moss) and decline or hang up
+  (danger) buttons; these round controls are the one place circles are
+  used for buttons. The call log marks missed calls in danger red.
 - **Verified seal:** a 15dp amber seal glyph after the contact name. It appears
   only when the safety number has been compared.
 - **Unread badge:** amber with ink text. It is the only colored element in a

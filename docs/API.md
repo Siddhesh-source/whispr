@@ -153,6 +153,18 @@ expired (30 days). Any account that knows the ID can download it: the ID and
 the key travel inside the encrypted message, and the blob is useless without
 the key.
 
+## Calls
+
+### `GET /v1/calls/turn`
+
+Short-lived credentials for the TURN relay, in coturn's REST-API scheme:
+`200 {"urls": ["stun:host:3478", "turn:host:3478?transport=udp", ...],
+"username": "<expiry unix>:<user id>", "credential": "<base64 HMAC-SHA1>",
+"ttl": 600}`. 10 requests a minute per user (`429 rate_limited`);
+`503 calls_unavailable` when the server runs no relay (calls then try direct
+connections only). Offers, answers and candidates never pass through this
+endpoint: they are encrypted payloads (below).
+
 ## WebSocket: `GET /v1/ws`
 
 Upgrade with the bearer token. One connection per user; a new one replaces
@@ -205,5 +217,15 @@ interoperate. After decryption a payload is JSON with a `t` discriminator
   receivers check the author and a 24-hour window.
 - `timer`: `seconds` (0 = off, at most 28 days), `ts`, `g`? — the newest
   change wins.
+- `status`: `sid`, `ts`, `kind` (`text` or `image`), `text`, `bg` (0–5), `a`?
+  (an attachment pointer for a photo). Pairwise to every accepted contact;
+  shown for 24 hours from `ts` and only from accepted contacts.
+- `status_delete`: `sid`, `ts` — the author removes a status early.
+- `call_offer` (`cid`, `sdp`, `video`, `ts`), `call_answer` (`cid`, `sdp`),
+  `call_ice` (`cid`, `c`: list of `{mid, idx, sdp}`), `call_hangup` (`cid`,
+  `reason`: `hangup`, `decline`, `busy`, `timeout` or `error`). An offer rings
+  only if the server accepted it in the last 45 seconds.
+- `media` for a GIF: `kind` stays `image`, `type` is `image/gif` or
+  `image/webp`, so older apps show the first frame.
 
 See `android/data/src/main/kotlin/dev/whispr/data/messaging/Payload.kt`.
