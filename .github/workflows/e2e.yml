@@ -75,6 +75,9 @@ jobs:
       - name: Copy the object storage bucket
         run: |
           mkdir -p "$RUNNER_TEMP/bucket"
+          # The client image runs as uid 65532; without write access it
+          # "mirrors" nothing and still exits 0.
+          chmod 777 "$RUNNER_TEMP/bucket"
           docker run --rm --network whispr_default \
             -e MC_HOST_local=http://whispr:whispr-dev-only@minio:9000 \
             -v "$RUNNER_TEMP/bucket:/out" \

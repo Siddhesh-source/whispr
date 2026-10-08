@@ -25,3 +25,4 @@ was done, and whether it is fixed or open.
 | 2026-10-08 | [Compile and test fixes: message actions and hardening](2026-10-08-compile-and-test-fixes.md) | fixed |
 | 2026-10-08 | [Token-expiry close sent as a bare EOF; load test miscounted accepts](2026-10-08-token-expiry-close-race.md) | fixed |
 | 2026-10-08 | [CI e2e live tests hit the new registration limit](2026-10-08-e2e-registration-limit.md) | fixed |
+| 2026-10-08 | [CI e2e bucket copy was always empty](2026-10-08-e2e-bucket-copy-empty.md) | fixed |
