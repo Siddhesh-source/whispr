@@ -61,6 +61,11 @@ func TestGatewayLoad(t *testing.T) {
 		total      = int64(users * perUser)
 		allArrived = make(chan struct{})
 		closeOnce  sync.Once
+		// Every send answered (accepted or rejected). Checked separately: a
+		// recipient can receive a message before its sender reads "accepted".
+		allAnswered = make(chan struct{})
+		answerOnce  sync.Once
+		answeredN   atomic.Int64
 	)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
@@ -110,8 +115,14 @@ func TestGatewayLoad(t *testing.T) {
 					sentMu.Unlock()
 					accLat.add(time.Since(s.at))
 					acceptedN.Add(1)
+					if answeredN.Add(1) == total {
+						answerOnce.Do(func() { close(allAnswered) })
+					}
 				case "rejected":
 					rejectedN.Add(1)
+					if answeredN.Add(1) == total {
+						answerOnce.Do(func() { close(allAnswered) })
+					}
 				case "envelope":
 					write(i, map[string]any{"type": "ack", "seq": f.Seq})
 					if f.Kind != "envelope" {
@@ -161,10 +172,16 @@ func TestGatewayLoad(t *testing.T) {
 	senders.Wait()
 	sendDone := time.Since(start)
 
+	deadline := time.After(5 * time.Minute)
 	select {
 	case <-allArrived:
-	case <-time.After(5 * time.Minute):
+	case <-deadline:
 		t.Errorf("only %d of %d messages arrived", receivedN.Load(), total)
+	}
+	select {
+	case <-allAnswered:
+	case <-deadline:
+		t.Errorf("only %d of %d sends were answered", answeredN.Load(), total)
 	}
 	elapsed := time.Since(start)
 	cancel()
