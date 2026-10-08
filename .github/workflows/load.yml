@@ -1,0 +1,49 @@
+name: load
+
+# Manual gateway load test (server/internal/messaging/load_test.go) against a
+# real Postgres: N connected users each send M messages to random peers. Fails
+# on any lost or duplicated message; prints throughput and latency percentiles.
+on:
+  workflow_dispatch:
+    inputs:
+      users:
+        description: Connected users
+        default: "200"
+      messages:
+        description: Messages per user
+        default: "50"
+
+permissions:
+  contents: read
+
+jobs:
+  load:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: whispr
+          POSTGRES_PASSWORD: whispr
+          POSTGRES_DB: whispr_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U whispr -d whispr_test"
+          --health-interval 2s --health-timeout 3s --health-retries 30
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - name: Gateway load test
+        env:
+          WHISPR_TEST_DATABASE_URL: postgres://whispr:whispr@localhost:5432/whispr_test?sslmode=disable
+          WHISPR_LOAD: "1"
+          WHISPR_LOAD_USERS: ${{ inputs.users }}
+          WHISPR_LOAD_MESSAGES: ${{ inputs.messages }}
+        run: go test ./internal/messaging -run TestGatewayLoad -count=1 -v -timeout 25m

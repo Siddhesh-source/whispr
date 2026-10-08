@@ -1,0 +1,91 @@
+name: release
+
+# Builds the signed Android release for a version tag (v0.1.0-beta.1) and
+# attaches the APK, AAB and SHA256SUMS to a GitHub release.
+#
+# Repository secrets: WHISPR_KEYSTORE_BASE64 (the release keystore, base64),
+# WHISPR_KEYSTORE_PASSWORD, WHISPR_KEY_ALIAS, WHISPR_KEY_PASSWORD.
+# Repository variables: WHISPR_RELEASE_SERVER_URL (https://...) and
+# WHISPR_CERT_PINS (comma-separated sha256/... SPKI pins, live + backup).
+# The build refuses to run without them (checkReleaseConfig).
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write # create the GitHub release
+    defaults:
+      run:
+        working-directory: android
+    env:
+      GRADLE_FLAGS: -Porg.gradle.java.installations.auto-download=false
+      NDK_VERSION: 28.2.13676358
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          cache-disabled: true # release builds start clean
+      - name: Tag matches versionName
+        run: |
+          version=$(sed -n 's/^ *versionName = "\(.*\)"/\1/p' app/build.gradle.kts)
+          test "v$version" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME != versionName $version"; exit 1; }
+      - name: Install the pinned NDK (strips libsignal's debug info)
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION" > /dev/null
+      - name: Decode keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.WHISPR_KEYSTORE_BASE64 }}
+        run: |
+          test -n "$KEYSTORE_BASE64" || { echo "WHISPR_KEYSTORE_BASE64 is not set"; exit 1; }
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+      - name: Build signed APK and AAB
+        env:
+          WHISPR_KEYSTORE_FILE: ${{ runner.temp }}/release.jks
+          WHISPR_KEYSTORE_PASSWORD: ${{ secrets.WHISPR_KEYSTORE_PASSWORD }}
+          WHISPR_KEY_ALIAS: ${{ secrets.WHISPR_KEY_ALIAS }}
+          WHISPR_KEY_PASSWORD: ${{ secrets.WHISPR_KEY_PASSWORD }}
+          SERVER_URL: ${{ vars.WHISPR_RELEASE_SERVER_URL }}
+          CERT_PINS: ${{ vars.WHISPR_CERT_PINS }}
+        run: >-
+          ./gradlew $GRADLE_FLAGS
+          -Pwhispr.releaseServerUrl="$SERVER_URL"
+          -Pwhispr.certPins="$CERT_PINS"
+          testDebugUnitTest :app:assembleRelease :app:bundleRelease
+      - name: Verify signature and collect artifacts
+        run: |
+          apksigner=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)/apksigner
+          # Unstripped libsignal is ~120 MB per ABI; stripped it is ~10 MB.
+          unzip -l app/build/outputs/apk/release/app-release.apk |
+            awk '/libsignal_jni.so/ && $1 > 30000000 { print "unstripped: " $4; bad = 1 } END { exit bad }'
+          mkdir -p "$RUNNER_TEMP/out"
+          cp app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/out/whispr-$GITHUB_REF_NAME.apk"
+          cp app/build/outputs/bundle/release/app-release.aab "$RUNNER_TEMP/out/whispr-$GITHUB_REF_NAME.aab"
+          "$apksigner" verify --print-certs "$RUNNER_TEMP/out/whispr-$GITHUB_REF_NAME.apk" | tee "$RUNNER_TEMP/out/SIGNING-CERT.txt"
+          cd "$RUNNER_TEMP/out" && sha256sum whispr-* > SHA256SUMS && cat SHA256SUMS
+      - name: Remove keystore
+        if: always()
+        run: rm -f "$RUNNER_TEMP/release.jks"
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prerelease=""
+          case "$GITHUB_REF_NAME" in *-*) prerelease="--prerelease" ;; esac
+          cd "$RUNNER_TEMP/out"
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag $prerelease \
+            --title "Whispr $GITHUB_REF_NAME" --generate-notes \
+            whispr-* SHA256SUMS SIGNING-CERT.txt
