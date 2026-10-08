@@ -5,6 +5,7 @@ import dev.whispr.data.db.AttachmentEntity
 import dev.whispr.data.db.MessageEntity
 import dev.whispr.data.db.OutboxEntity
 import dev.whispr.data.db.WhisprDatabase
+import dev.whispr.data.messaging.AttachmentPointer
 import dev.whispr.data.messaging.Attachments
 import dev.whispr.data.messaging.GroupManager
 import dev.whispr.data.messaging.Payload
@@ -78,14 +79,63 @@ class MediaService(
         data class Group(val id: String) : Target
     }
 
-    suspend fun send(conversation: ConversationId, target: Target, source: MediaSource): SendResult {
+    /** [expiresIn]: the conversation's disappearing-message timer (seconds), if on. */
+    suspend fun send(
+        conversation: ConversationId,
+        target: Target,
+        source: MediaSource,
+        expiresIn: Long? = null,
+    ): SendResult {
         val prepared = when (val p = preparer.prepare(source)) {
             is Prepared.Ok -> p.media
             Prepared.TooLarge -> return SendResult.TooLarge
             Prepared.Unreadable -> return SendResult.Unreadable
         }
         if (prepared.bytes.size > SendResult.MAX_ATTACHMENT_BYTES) return SendResult.TooLarge
-        val sealed = withContext(Dispatchers.Default) { MediaCrypto.seal(prepared.bytes) }
+        val template = AttachmentEntity(
+            messageRow = 0,
+            remoteId = null,
+            key = ByteArray(0),
+            digest = ByteArray(0),
+            size = prepared.bytes.size.toLong(),
+            contentType = prepared.contentType,
+            kind = source.kind.name,
+            fileName = prepared.fileName?.let(Attachments::safeFileName),
+            width = prepared.width,
+            height = prepared.height,
+            durationMs = prepared.durationMs,
+            thumbnail = prepared.thumbnail,
+            blobPath = null,
+            state = AttachmentState.Uploading.name,
+        )
+        sealAndQueue(conversation, target, prepared.bytes, template, forwarded = false, expiresIn = expiresIn)
+        return SendResult.Ok
+    }
+
+    /**
+     * Forwards the attachment of our stored message [sourceRow]: decrypted
+     * in memory, then sealed under a fresh key and uploaded as a new blob.
+     * Reusing the original blob would let the server link the two
+     * conversations, and the copy would expire with the original.
+     */
+    suspend fun forward(sourceRow: Long, conversation: ConversationId, target: Target, expiresIn: Long?): SendResult {
+        val source = queries.attachment(sourceRow) ?: return SendResult.NotAllowed
+        if (source.state != AttachmentState.Ready.name) return SendResult.NotAllowed
+        val plaintext = bytes(sourceRow) ?: return SendResult.Unreadable
+        sealAndQueue(conversation, target, plaintext, source, forwarded = true, expiresIn = expiresIn)
+        return SendResult.Ok
+    }
+
+    /** Encrypts [plaintext] with a fresh key, stores the message and blob, and starts the upload. */
+    private suspend fun sealAndQueue(
+        conversation: ConversationId,
+        target: Target,
+        plaintext: ByteArray,
+        template: AttachmentEntity,
+        forwarded: Boolean,
+        expiresIn: Long?,
+    ) {
+        val sealed = withContext(Dispatchers.Default) { MediaCrypto.seal(plaintext) }
         val path = withContext(Dispatchers.IO) { files.write(sealed.blob) }
         val mid = UUID.randomUUID().toString()
         val now = clock()
@@ -102,22 +152,18 @@ class MediaService(
                     body = "",
                     timestamp = now,
                     status = MessageStatus.Sending.name,
+                    forwarded = forwarded,
+                    expiresIn = expiresIn,
+                    expireAt = expiresIn?.let { now + it * MS_PER_S },
                 ),
             )
             db.groupDao().putAttachment(
-                AttachmentEntity(
+                template.copy(
                     messageRow = row,
                     remoteId = null,
                     key = sealed.key,
                     digest = sealed.digest,
-                    size = prepared.bytes.size.toLong(),
-                    contentType = prepared.contentType,
-                    kind = source.kind.name,
-                    fileName = prepared.fileName?.let(Attachments::safeFileName),
-                    width = prepared.width,
-                    height = prepared.height,
-                    durationMs = prepared.durationMs,
-                    thumbnail = prepared.thumbnail,
+                    size = plaintext.size.toLong(),
                     blobPath = path,
                     state = AttachmentState.Uploading.name,
                 ),
@@ -125,7 +171,6 @@ class MediaService(
             row
         }
         scope.launch { upload(row) }
-        return SendResult.Ok
     }
 
     /** Uploads (or retries) the blob of our message [row], then queues the message itself. */
@@ -151,9 +196,7 @@ class MediaService(
             // A retry after a failed upload: back to Sending.
             gdao.setStatus(message.messageId, MessageStatus.Sending.name)
             if (gdao.group(message.conversationId) != null) {
-                val payload = PayloadCodec.encode(
-                    Payload.Media(pointer, mid = message.messageId, ts = message.timestamp, g = message.conversationId),
-                )
+                val payload = PayloadCodec.encode(message.mediaPayload(pointer, g = message.conversationId))
                 when (
                     groups.enqueueGroup(
                         self,
@@ -173,15 +216,24 @@ class MediaService(
                         messageId = message.messageId,
                         conversationId = message.conversationId,
                         recipientId = message.peerId,
-                        payload = PayloadCodec.encode(
-                            Payload.Media(pointer, mid = message.messageId, ts = message.timestamp),
-                        ),
+                        payload = PayloadCodec.encode(message.mediaPayload(pointer, g = null)),
                         clientTs = message.timestamp,
                     ),
                 )
             }
         }
     }
+
+    private fun MessageEntity.mediaPayload(pointer: AttachmentPointer, g: String?) = Payload.Media(
+        pointer,
+        mid = messageId,
+        ts = timestamp,
+        g = g,
+        q = quoteId,
+        qa = quoteAuthor,
+        fwd = forwarded,
+        exp = expiresIn,
+    )
 
     /** Uploads interrupted by the app dying resume on start. */
     suspend fun resumePending() {
@@ -229,6 +281,10 @@ class MediaService(
         val plaintext = bytes(row) ?: return null
         val name = a.fileName ?: ("whispr-" + row + extension(a.contentType))
         return withContext(Dispatchers.IO) { files.export(plaintext, name) }
+    }
+
+    private companion object {
+        const val MS_PER_S = 1_000L
     }
 
     private fun extension(type: String) = when (type) {

@@ -97,7 +97,7 @@ class RelayDevice(val name: String, private val relay: FakeRelay, url: String) {
         scope,
         crypto.crypto,
         crypto.maintainer,
-        EngineTimings(resendAfterMs = 500, backoffBaseMs = 50, backoffMaxMs = 200, parkRetryMs = 200),
+        EngineTimings(resendAfterMs = 500, backoffBaseMs = 50, backoffMaxMs = 200, parkRetryMs = 200, sweepMs = 100),
     )
     val preparer = FakePreparer()
     private val mediaDir = Files.createTempDirectory("whispr-media-$name").toFile()

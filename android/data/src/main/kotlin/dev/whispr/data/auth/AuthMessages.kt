@@ -11,6 +11,7 @@ import java.util.UUID
 object AuthMessages {
     private val REGISTER_LABEL = "whispr-register-v1\u0000".toByteArray(Charsets.US_ASCII)
     private val AUTH_LABEL = "whispr-auth-v1\u0000".toByteArray(Charsets.US_ASCII)
+    private val DELETE_LABEL = "whispr-delete-v1\u0000".toByteArray(Charsets.US_ASCII)
 
     /** `"whispr-register-v1" 0x00 || identity_key (33 bytes) || display_name (UTF-8)` */
     fun register(identityKey: ByteArray, displayName: String): ByteArray {
@@ -19,12 +20,16 @@ object AuthMessages {
     }
 
     /** `"whispr-auth-v1" 0x00 || user_id (16 raw bytes, RFC 4122 order) || nonce` */
-    fun auth(userId: UUID, nonce: ByteArray): ByteArray {
-        val id = ByteBuffer.allocate(
-            UUID_LEN,
-        ).putLong(userId.mostSignificantBits).putLong(userId.leastSignificantBits).array()
-        return AUTH_LABEL + id + nonce
-    }
+    fun auth(userId: UUID, nonce: ByteArray): ByteArray = AUTH_LABEL + raw(userId) + nonce
+
+    /**
+     * `"whispr-delete-v1" 0x00 || user_id || nonce`: deleting the account. Its
+     * own label means a sign-in signature can never delete an account.
+     */
+    fun delete(userId: UUID, nonce: ByteArray): ByteArray = DELETE_LABEL + raw(userId) + nonce
+
+    private fun raw(userId: UUID): ByteArray =
+        ByteBuffer.allocate(UUID_LEN).putLong(userId.mostSignificantBits).putLong(userId.leastSignificantBits).array()
 
     private const val IDENTITY_KEY_LEN = 33
     private const val UUID_LEN = 16

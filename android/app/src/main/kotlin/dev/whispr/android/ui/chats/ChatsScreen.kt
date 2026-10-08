@@ -58,6 +58,7 @@ fun ChatsRoute(
     onOpenGroup: (GroupId) -> Unit,
     onNewGroup: () -> Unit,
     onNewChat: () -> Unit,
+    onSearch: () -> Unit = {},
     viewModel: ChatsViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -71,6 +72,7 @@ fun ChatsRoute(
         onOpenGroup = onOpenGroup,
         onNewGroup = onNewGroup,
         onRetry = viewModel::retrySignIn,
+        onSearch = onSearch,
     )
 }
 
@@ -84,6 +86,7 @@ fun ChatsScreen(
     onMyCode: () -> Unit = {},
     onOpenGroup: (GroupId) -> Unit = {},
     onNewGroup: () -> Unit = {},
+    onSearch: () -> Unit = {},
 ) {
     val newChat = stringResource(R.string.chats_new_chat)
     Scaffold(
@@ -92,6 +95,11 @@ fun ChatsScreen(
             WhisprTopBar(
                 title = stringResource(R.string.chats_title),
                 actions = {
+                    if (state.content is ChatsContent.Conversations) {
+                        IconButton(onClick = onSearch) {
+                            Icon(WhisprIcons.Search, contentDescription = stringResource(R.string.chats_search))
+                        }
+                    }
                     IconButton(onClick = onNewGroup) {
                         Icon(WhisprIcons.Group, contentDescription = stringResource(R.string.chats_new_group))
                     }

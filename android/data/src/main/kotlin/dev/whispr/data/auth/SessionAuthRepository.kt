@@ -40,6 +40,7 @@ class SessionAuthRepository(
     private val identity: IdentityRepository,
     private val accounts: AccountRepository,
     private val clock: Clock = Clock.systemUTC(),
+    private val wipe: suspend () -> Unit = {},
 ) : AuthRepository,
     TokenSource {
 
@@ -80,6 +81,50 @@ class SessionAuthRepository(
                 currentToken()
             }
         }
+    }
+
+    /**
+     * Server first: if the server delete fails, nothing local is touched and
+     * the user can retry. Once the server has deleted the account, the local
+     * wipe runs even if it partly fails, since the identity is gone anyway.
+     */
+    override suspend fun deleteAccount(): AuthResult<Unit> = mutex.withLock {
+        val bearer = currentToken() ?: run {
+            (signIn() as? AuthResult.Err)?.let { return@withLock it }
+            currentToken() ?: return@withLock AuthResult.Err(AuthError.Server)
+        }
+        val userId = accounts.getAccount()?.userId ?: return@withLock AuthResult.Err(AuthError.Rejected)
+        val uuid = runCatching { UUID.fromString(userId.value) }.getOrElse {
+            return@withLock AuthResult.Err(AuthError.Storage)
+        }
+        val challenge = when (val r = api.challenge(userId.value)) {
+            is ApiResult.Success -> r.body
+            is ApiResult.HttpError -> return@withLock AuthResult.Err(mapHttp(r.code))
+            ApiResult.NetworkError -> return@withLock AuthResult.Err(AuthError.Network)
+        }
+        val nonce = runCatching { AuthApi.unb64(challenge.nonce) }.getOrElse {
+            return@withLock AuthResult.Err(AuthError.Server)
+        }
+        val signature = try {
+            identity.sign(AuthMessages.delete(uuid, nonce))
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            return@withLock AuthResult.Err(AuthError.Storage)
+        }
+        when (val r = api.deleteAccount(bearer, challenge.challengeId, signature)) {
+            is ApiResult.Success -> Unit
+            is ApiResult.HttpError -> return@withLock AuthResult.Err(mapHttp(r.code))
+            ApiResult.NetworkError -> return@withLock AuthResult.Err(AuthError.Network)
+        }
+        token = null
+        state.value = SessionState.Unavailable(AuthError.Rejected)
+        try {
+            wipe()
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            return@withLock AuthResult.Err(AuthError.WipeIncomplete)
+        }
+        AuthResult.Ok(Unit)
     }
 
     override fun invalidate() {

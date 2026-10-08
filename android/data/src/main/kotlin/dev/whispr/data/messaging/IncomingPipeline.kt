@@ -6,6 +6,7 @@ import dev.whispr.data.crypto.SessionCrypto
 import dev.whispr.data.crypto.SignalStore
 import dev.whispr.data.crypto.WireFormat
 import dev.whispr.data.db.ContactEntity
+import dev.whispr.data.db.ConversationSettingEntity
 import dev.whispr.data.db.CryptoDao
 import dev.whispr.data.db.DecryptAttemptEntity
 import dev.whispr.data.db.HeldEnvelopeEntity
@@ -20,6 +21,7 @@ import dev.whispr.data.db.WhisprDatabase
 import dev.whispr.data.network.UserResponse
 import dev.whispr.domain.model.ConversationId
 import dev.whispr.domain.model.GroupStatus
+import dev.whispr.domain.model.MessageRules
 import dev.whispr.domain.model.UserId
 import java.util.Base64
 import java.util.UUID
@@ -41,6 +43,9 @@ class IncomingEnvelope(
 interface PipelineEvents {
     fun onText(conversation: ConversationId, senderName: String, body: String)
     fun onTyping(conversation: ConversationId)
+
+    /** A message in [conversation] was deleted by its author: drop what a notification still shows. */
+    fun onRemoved(conversation: ConversationId) = Unit
 
     /** A PreKey message used one of our one-time keys: check whether to top up. */
     fun onOneTimeKeyUsed()
@@ -85,7 +90,9 @@ class IncomingPipeline(
         when (result) {
             is DecryptResult.Ok -> {
                 if (released) crypto.transaction { dao.releaseHeld(e.sender, e.id) }
+                MessageDeletion.deleteFiles(result.value.deleteFiles)
                 result.value.notify?.let { (conv, name, body) -> events.onText(conv, name, body) }
+                result.value.removed?.let(events::onRemoved)
                 result.value.releaseGroup.forEach { releaseGroupHeld(me, it) }
                 if (result.usedOneTimeKey) events.onOneTimeKeyUsed()
                 if (result.value.lookupSender) refreshStranger(e.sender)
@@ -166,7 +173,9 @@ class IncomingPipeline(
         when (result) {
             is GroupDecryptResult.Ok -> {
                 if (released) crypto.transaction { gdao.releaseHeld(e.sender, e.id) }
+                MessageDeletion.deleteFiles(result.value.deleteFiles)
                 result.value.notify?.let { (conv, name, body) -> events.onText(conv, name, body) }
+                result.value.removed?.let(events::onRemoved)
             }
             GroupDecryptResult.Replay -> crypto.transaction {
                 dao.markSeen(SeenEnvelopeEntity(e.sender, e.id, clock()))
@@ -218,9 +227,15 @@ class IncomingPipeline(
         val group = db.groupDao().group(groupId)?.name.orEmpty()
         return when {
             p is Payload.Text && p.g == groupId ->
-                applyContent(ConversationId(groupId), e, p.mid, p.ts, null, p.body, null, group)
+                applyContent(ConversationId(groupId), e, p.mid, p.ts, null, p.body, null, group, meta = p.meta())
             p is Payload.Media && p.g == groupId ->
-                applyContent(ConversationId(groupId), e, p.mid, p.ts, null, "", p.a, group)
+                applyContent(ConversationId(groupId), e, p.mid, p.ts, null, "", p.a, group, meta = p.meta())
+            p is Payload.Delete && p.g == groupId ->
+                deleted(ConversationId(groupId), applyDelete(groupId, e.sender, p.target, e.serverTs))
+            p is Payload.Timer && p.g == groupId -> {
+                applyTimer(groupId, groupId, e.sender, p)
+                Applied()
+            }
             p is Payload.Reaction && p.g == groupId -> {
                 applyReaction(groupId, e.sender, p)
                 Applied()
@@ -298,6 +313,10 @@ class IncomingPipeline(
         val lookupSender: Boolean = false,
         /** Senders whose held group messages may now be decryptable. */
         val releaseGroup: List<String> = emptyList(),
+        /** Encrypted blobs of deleted messages, removed once the transaction has committed. */
+        val deleteFiles: List<String> = emptyList(),
+        /** A message here was deleted for everyone. */
+        val removed: ConversationId? = null,
     )
 
     /** Runs inside the decrypt transaction on the crypto thread. */
@@ -317,12 +336,21 @@ class IncomingPipeline(
             is Payload.Text -> if (p.g != null) {
                 Applied()
             } else {
-                applyContent(conversation, e, p.mid, p.ts, p.replaces, p.body, null, null, stranger)
+                applyContent(conversation, e, p.mid, p.ts, p.replaces, p.body, null, null, stranger, p.meta())
             }
             is Payload.Media -> if (p.g != null) {
                 Applied()
             } else {
-                applyContent(conversation, e, p.mid, p.ts, p.replaces, "", p.a, null, stranger)
+                applyContent(conversation, e, p.mid, p.ts, p.replaces, "", p.a, null, stranger, p.meta())
+            }
+            is Payload.Delete -> if (p.g == null) {
+                deleted(conversation, applyDelete(conversation.value, e.sender, p.target, e.serverTs))
+            } else {
+                Applied()
+            }
+            is Payload.Timer -> {
+                if (p.g == null) applyTimer(conversation.value, e.sender, e.sender, p)
+                Applied()
             }
             is Payload.Reaction -> {
                 if (p.g == null && (p.author == me || p.author == e.sender)) {
@@ -379,6 +407,7 @@ class IncomingPipeline(
         pointer: AttachmentPointer?,
         group: String?,
         stranger: Boolean = false,
+        meta: Meta = Meta(),
     ): Applied {
         val mid = midOrNull ?: e.id
         val attachment = pointer?.let { Attachments.fromPointer(it) ?: return Applied() } // malformed: drop
@@ -390,7 +419,15 @@ class IncomingPipeline(
         }
         val timestamp = if (placeholder != null) ts ?: placeholder.timestamp else e.serverTs
         val row = if (placeholder != null) {
-            dao.recoverPlaceholder(placeholder.localOrder, body, timestamp)
+            dao.recoverPlaceholder(
+                placeholder.localOrder,
+                body,
+                timestamp,
+                meta.quoteId,
+                meta.quoteAuthor,
+                meta.forwarded,
+                meta.expiresIn,
+            )
             dao.resolveReset(e.sender, placeholder.messageId)
             placeholder.localOrder
         } else {
@@ -403,6 +440,10 @@ class IncomingPipeline(
                     body = body,
                     timestamp = timestamp,
                     status = null,
+                    quoteId = meta.quoteId,
+                    quoteAuthor = meta.quoteAuthor,
+                    forwarded = meta.forwarded,
+                    expiresIn = meta.expiresIn,
                 ),
             )
         }
@@ -418,6 +459,58 @@ class IncomingPipeline(
         val preview = if (attachment != null) Attachments.preview(attachment.kind) else body
         val title = if (group != null) "$name · $group" else name
         return Applied(notify = if (row != -1L) Triple(conversation, title, preview) else null, lookupSender = stranger)
+    }
+
+    /** Reply, forward and timer details of a text or media message, validated. */
+    class Meta(
+        val quoteId: String? = null,
+        val quoteAuthor: String? = null,
+        val forwarded: Boolean = false,
+        val expiresIn: Long? = null,
+    )
+
+    private fun meta(q: String?, qa: String?, fwd: Boolean, exp: Long?): Meta {
+        val quoted = q != null && qa != null && q.length <= MAX_ID && qa.length <= MAX_ID
+        return Meta(
+            quoteId = q.takeIf { quoted },
+            quoteAuthor = qa.takeIf { quoted },
+            forwarded = fwd,
+            expiresIn = exp?.takeIf { it in 1..MessageRules.MAX_TIMER_SECONDS },
+        )
+    }
+
+    private fun Payload.Text.meta() = meta(q, qa, fwd, exp)
+
+    private fun Payload.Media.meta() = meta(q, qa, fwd, exp)
+
+    /**
+     * [author] deletes their message [target] for everyone. Only their own
+     * messages qualify (never ours: a 1:1 conversation holds both sides),
+     * and only within the window. Returns blob files to remove once the
+     * transaction has committed.
+     */
+    private fun deleted(conversation: ConversationId, files: List<String>?) =
+        Applied(deleteFiles = files.orEmpty(), removed = conversation.takeIf { files != null })
+
+    /** The blob files to delete, or null when the request is refused. */
+    private fun applyDelete(conversation: String, author: String, target: String, at: Long): List<String>? {
+        if (target.length > MAX_ID) return null
+        val m = db.groupDao().messageFrom(conversation, author, target) ?: return null
+        if (m.outgoing || m.system || m.deleted) return null
+        if (at - m.timestamp > MessageRules.DELETE_FOR_EVERYONE_WINDOW.toMillis() + DELETE_CLOCK_SLACK_MS) {
+            return null
+        }
+        return MessageDeletion.tombstone(dao, m, author)
+    }
+
+    /** The newest timer change wins, from anyone in the conversation; each change is shown as a notice. */
+    private fun applyTimer(conversation: String, noticePeer: String, sender: String, p: Payload.Timer) {
+        if (p.seconds !in 0..MessageRules.MAX_TIMER_SECONDS) return
+        val current = dao.conversationSetting(conversation)
+        if (current != null && current.timerTs >= p.ts) return
+        dao.putConversationSetting(ConversationSettingEntity(conversation, p.seconds, p.ts))
+        val name = dao.contact(sender)?.displayName ?: SignalStore.UNKNOWN_CONTACT
+        dao.insertMessage(MessageDeletion.notice(conversation, noticePeer, TimerText.changed(name, p.seconds), clock()))
     }
 
     /** One reaction per reactor per message; a newer one replaces an older one. */
@@ -553,6 +646,9 @@ class IncomingPipeline(
         private const val MAX_ID = 64
         private const val MAX_EMOJI = 16
 
+        /** A delete may arrive a little after the window (queued while offline, clock skew). */
+        private const val DELETE_CLOCK_SLACK_MS = 60 * 60 * 1000L
+
         // processGroup outcomes besides a group ID.
         private const val HOLD = "\u0000hold"
         private const val DROP = "\u0000drop"
@@ -568,6 +664,8 @@ class IncomingPipeline(
             is Payload.Read -> "read"
             is Payload.ContactRequest -> "contact_request"
             is Payload.Reaction -> "reaction"
+            is Payload.Delete -> "delete"
+            is Payload.Timer -> "timer"
             is Payload.SenderKey -> "sender_key"
             is Payload.GroupUpdate, is Payload.GroupJoin, is Payload.GroupDecline, is Payload.GroupLeave -> "group"
             Payload.Typing, is Payload.SessionReset, is Payload.ResetDone -> KIND_CONTROL
@@ -586,6 +684,8 @@ class IncomingPipeline(
             is Payload.Text -> replaces
             is Payload.Media -> replaces
             is Payload.Reaction -> replaces
+            is Payload.Delete -> replaces
+            is Payload.Timer -> replaces
             is Payload.Read -> replaces
             is Payload.ContactRequest -> replaces
             is Payload.GroupUpdate -> replaces
@@ -600,6 +700,8 @@ class IncomingPipeline(
             is Payload.Text -> copy(replaces = id)
             is Payload.Media -> copy(replaces = id)
             is Payload.Reaction -> copy(replaces = id)
+            is Payload.Delete -> copy(replaces = id)
+            is Payload.Timer -> copy(replaces = id)
             is Payload.Read -> copy(replaces = id)
             is Payload.ContactRequest -> copy(replaces = id)
             is Payload.GroupUpdate -> copy(replaces = id)

@@ -29,6 +29,13 @@ sealed interface Payload {
         val replaces: String? = null,
         /** Group ID for a group message. */
         val g: String? = null,
+        /** Reply: the quoted message's logical ID and its author's user ID. */
+        val q: String? = null,
+        val qa: String? = null,
+        /** Forwarded from another conversation. */
+        val fwd: Boolean = false,
+        /** Disappearing-message timer in seconds, fixed when sent. */
+        val exp: Long? = null,
     ) : Payload
 
     /** An encrypted attachment: the key and digest travel here, the ciphertext in object storage. */
@@ -40,7 +47,25 @@ sealed interface Payload {
         val ts: Long? = null,
         val replaces: String? = null,
         val g: String? = null,
+        val q: String? = null,
+        val qa: String? = null,
+        val fwd: Boolean = false,
+        val exp: Long? = null,
     ) : Payload
+
+    /**
+     * "Delete my message [target] for everyone." Accepted only from the
+     * target's author and only within the delete window; the receiver
+     * checks both.
+     */
+    @Serializable
+    @SerialName("delete")
+    data class Delete(val target: String, val ts: Long, val g: String? = null, val replaces: String? = null) : Payload
+
+    /** Sets the conversation's disappearing-message timer ([seconds], 0 = off). The newest [ts] wins. */
+    @Serializable
+    @SerialName("timer")
+    data class Timer(val seconds: Long, val ts: Long, val g: String? = null, val replaces: String? = null) : Payload
 
     /** Sets (or with [emoji] null removes) the sender's reaction to message [target] by [author]. */
     @Serializable

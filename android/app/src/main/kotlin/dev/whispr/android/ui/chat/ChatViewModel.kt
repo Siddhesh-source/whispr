@@ -8,10 +8,12 @@ import dev.whispr.android.notifications.ActiveConversation
 import dev.whispr.core.designsystem.component.BubbleGroupPosition
 import dev.whispr.domain.model.AttachmentKind
 import dev.whispr.domain.model.ConversationId
+import dev.whispr.domain.model.ConversationSummary
 import dev.whispr.domain.model.GroupId
 import dev.whispr.domain.model.GroupStatus
 import dev.whispr.domain.model.MediaSource
 import dev.whispr.domain.model.Message
+import dev.whispr.domain.model.MessageRules
 import dev.whispr.domain.model.SendResult
 import dev.whispr.domain.model.TrustState
 import dev.whispr.domain.model.UserId
@@ -20,6 +22,7 @@ import dev.whispr.domain.repository.ConnectivityRepository
 import dev.whispr.domain.repository.ContactsRepository
 import dev.whispr.domain.repository.GroupsRepository
 import dev.whispr.domain.repository.MessagingRepository
+import java.time.Instant
 import javax.inject.Inject
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -42,8 +45,8 @@ sealed interface ChatContent {
     data class Messages(val items: List<BubbleItem>) : ChatContent
 }
 
-/** Why a media send was refused, shown once as a message. */
-enum class ChatError { TooLarge, Unreadable, NotAllowed }
+/** Why a send, forward or delete was refused, shown once as a message. */
+enum class ChatError { TooLarge, Unreadable, NotAllowed, DeleteFailed }
 
 data class ChatUiState(
     val peerName: String = "",
@@ -59,6 +62,10 @@ data class ChatUiState(
     val groupStatus: GroupStatus? = null,
     val memberCount: Int = 0,
     val error: ChatError? = null,
+    /** The message the next send replies to. */
+    val replyingTo: Message? = null,
+    /** Disappearing-message timer in seconds; 0 is off. */
+    val timerSeconds: Long = 0,
 ) {
     /** Sending is only possible for accepted contacts with no unacknowledged key change, or active groups. */
     val canCompose: Boolean
@@ -81,6 +88,7 @@ class ChatViewModel @Inject constructor(
     private val groupId = savedState.get<String>("groupId")?.takeIf { it.isNotEmpty() }?.let(::GroupId)
     private val input = MutableStateFlow("")
     private val error = MutableStateFlow<ChatError?>(null)
+    private val replyTo = MutableStateFlow<Message?>(null)
 
     private val conversation: StateFlow<ConversationId?> = (
         groupId?.let { flowOf(it.conversation) }
@@ -123,14 +131,28 @@ class ChatViewModel @Inject constructor(
 
     private val messages = conversation.filterNotNull().flatMapLatest { messaging.observeMessages(it) }
     private val typing = conversation.filterNotNull().flatMapLatest { messaging.observePeerTyping(it) }
+    private val timer = conversation.filterNotNull().flatMapLatest { messaging.observeTimer(it) }
+
+    /** Where a message can be forwarded: every other conversation we can write to. */
+    val forwardTargets: StateFlow<List<ConversationSummary>> = combine(
+        messaging.observeConversations(),
+        conversation,
+    ) { all, current ->
+        all.filter { c ->
+            val writable = c.group?.let { it.status == GroupStatus.Active }
+                ?: c.peer?.let { !it.isRequest && it.trust != TrustState.KeyChanged }
+                ?: false
+            c.id != current && writable
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), emptyList())
 
     val state: StateFlow<ChatUiState> = combine(
         header,
         messages,
         typing,
         combine(connectivity.isOnline, error) { online, e -> online to e },
-        input,
-    ) { h, msgs, isTyping, (online, e), text ->
+        combine(input, replyTo, timer) { text, reply, seconds -> Triple(text, reply, seconds) },
+    ) { h, msgs, isTyping, (online, e), (text, reply, seconds) ->
         ChatUiState(
             peerName = h.name,
             content = if (!h.exists) ChatContent.Missing else ChatContent.Messages(group(msgs)),
@@ -143,6 +165,8 @@ class ChatViewModel @Inject constructor(
             groupStatus = h.groupStatus,
             memberCount = h.members,
             error = e,
+            replyingTo = reply,
+            timerSeconds = seconds,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), ChatUiState(isGroup = groupId != null))
 
@@ -162,12 +186,16 @@ class ChatViewModel @Inject constructor(
         if (text.isEmpty() || !state.value.canCompose) return
         viewModelScope.launch {
             // Keep the draft if sending is refused (e.g. a key change arrived meanwhile).
+            val quoted = replyTo.value?.id
             val ok = when {
-                groupId != null -> messaging.sendGroupText(groupId, text)
-                peer != null -> messaging.sendText(peer, text)
+                groupId != null -> messaging.sendGroupText(groupId, text, quoted)
+                peer != null -> messaging.sendText(peer, text, quoted)
                 else -> false
             }
-            if (ok) input.value = ""
+            if (ok) {
+                input.value = ""
+                replyTo.value = null
+            }
         }
     }
 
@@ -191,6 +219,44 @@ class ChatViewModel @Inject constructor(
 
     fun dismissError() {
         error.value = null
+    }
+
+    fun replyTo(message: Message?) {
+        replyTo.value = message?.takeIf { MessageRules.isContent(it) }
+    }
+
+    fun forward(messageId: String, to: ConversationId) {
+        val from = conversation.value ?: return
+        viewModelScope.launch {
+            error.value = when (messaging.forward(from, messageId, to)) {
+                SendResult.Ok -> null
+                SendResult.TooLarge -> ChatError.TooLarge
+                SendResult.Unreadable -> ChatError.Unreadable
+                SendResult.NotAllowed -> ChatError.NotAllowed
+            }
+        }
+    }
+
+    fun deleteForMe(messageId: String) {
+        val id = conversation.value ?: return
+        if (replyTo.value?.id == messageId) replyTo.value = null
+        viewModelScope.launch { messaging.deleteForMe(id, messageId) }
+    }
+
+    fun deleteForEveryone(messageId: String) {
+        val id = conversation.value ?: return
+        if (replyTo.value?.id == messageId) replyTo.value = null
+        viewModelScope.launch {
+            if (!messaging.deleteForEveryone(id, messageId)) error.value = ChatError.DeleteFailed
+        }
+    }
+
+    fun canDeleteForEveryone(message: Message): Boolean =
+        state.value.canCompose && MessageRules.canDeleteForEveryone(message, Instant.now())
+
+    fun setTimer(seconds: Long) {
+        val id = conversation.value ?: return
+        viewModelScope.launch { if (!messaging.setTimer(id, seconds)) error.value = ChatError.NotAllowed }
     }
 
     fun react(messageId: String, emoji: String?) {

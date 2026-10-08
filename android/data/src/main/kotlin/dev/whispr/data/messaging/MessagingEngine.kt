@@ -79,6 +79,8 @@ data class EngineTimings(
     val noKeysRetryMs: Long = 5 * 60_000,
     /** How often pending session resets are re-examined while connected. */
     val resetTickMs: Long = 5 * 60_000,
+    /** How often expired disappearing messages are deleted. */
+    val sweepMs: Long = 60_000,
 )
 
 /**
@@ -123,6 +125,10 @@ class MessagingEngine(
     private val incomingFlow = MutableSharedFlow<IncomingMessage>(extraBufferCapacity = 64)
     val incoming: SharedFlow<IncomingMessage> = incomingFlow.asSharedFlow()
 
+    /** Conversations where a message was deleted for everyone or disappeared. */
+    private val removedFlow = MutableSharedFlow<ConversationId>(extraBufferCapacity = 64)
+    val removed: SharedFlow<ConversationId> = removedFlow.asSharedFlow()
+
     /** Conversation ID → epoch millis until which the peer counts as typing. */
     private val typingUntil = MutableStateFlow<Map<String, Long>>(emptyMap())
     val typing: StateFlow<Map<String, Long>> = typingUntil.asStateFlow()
@@ -149,6 +155,10 @@ class MessagingEngine(
             override fun onText(conversation: ConversationId, senderName: String, body: String) {
                 incomingFlow.tryEmit(IncomingMessage(conversation, senderName, body))
                 typingUntil.update { it - conversation.value }
+            }
+
+            override fun onRemoved(conversation: ConversationId) {
+                removedFlow.tryEmit(conversation)
             }
 
             override fun onTyping(conversation: ConversationId) {
@@ -241,7 +251,15 @@ class MessagingEngine(
                 var attempt = 0
                 while (true) {
                     state.value = ConnectionState.Connecting
-                    if (runSession()) attempt = 0
+                    when (runSession()) {
+                        // The server ends a socket when its token expires: sign in again at once.
+                        SessionEnd.TokenExpired -> {
+                            attempt = 0
+                            continue
+                        }
+                        SessionEnd.Closed -> attempt = 0
+                        SessionEnd.NotOpened -> Unit
+                    }
                     state.value = ConnectionState.Connecting
                     delay(backoffDelay(attempt++))
                 }
@@ -249,7 +267,35 @@ class MessagingEngine(
         }
         // Wake the pump whenever the outbox changes.
         scope.launch { db.outboxDao().observeCount().collect { outboxSignal.trySend(Unit) } }
+        scope.launch {
+            while (true) {
+                sweepExpired()
+                delay(timings.sweepMs)
+            }
+        }
     }
+
+    /** Deletes disappearing messages whose time is up, with their attachments and reactions. */
+    suspend fun sweepExpired() {
+        val me = accounts.getAccount()?.userId?.value ?: return
+        val conversations = mutableSetOf<String>()
+        val files = try {
+            crypto.transaction {
+                dao.expired(clock()).flatMap { m ->
+                    conversations += m.conversationId
+                    MessageDeletion.remove(dao, m, if (m.outgoing) me else m.peerId)
+                }
+            }
+        } catch (c: CancellationException) {
+            throw c
+        } catch (_: Exception) {
+            return // retried on the next sweep
+        }
+        MessageDeletion.deleteFiles(files)
+        conversations.forEach { removedFlow.tryEmit(ConversationId(it)) }
+    }
+
+    private enum class SessionEnd { NotOpened, Closed, TokenExpired }
 
     internal fun backoffDelay(attempt: Int): Long {
         val exp = (timings.backoffBaseMs shl attempt.coerceAtMost(MAX_SHIFT)).coerceAtMost(timings.backoffMaxMs)
@@ -257,10 +303,10 @@ class MessagingEngine(
         return (exp * (0.8 + 0.4 * random.nextDouble())).toLong()
     }
 
-    /** Runs one connection until it closes. Returns true if it opened. */
-    private suspend fun runSession(): Boolean = coroutineScope {
-        val me = accounts.getAccount()?.userId ?: return@coroutineScope false
-        val token = tokens.bearerToken() ?: return@coroutineScope false
+    /** Runs one connection until it closes. */
+    private suspend fun runSession(): SessionEnd = coroutineScope {
+        val me = accounts.getAccount()?.userId ?: return@coroutineScope SessionEnd.NotOpened
+        val token = tokens.bearerToken() ?: return@coroutineScope SessionEnd.NotOpened
         val events = Channel<WsEvent>(Channel.UNLIMITED)
         val request = Request.Builder().url(api.webSocketUrl()).header("Authorization", "Bearer $token").build()
         val ws = wsClient.newWebSocket(request, Listener(events))
@@ -268,22 +314,30 @@ class MessagingEngine(
             val first = withTimeoutOrNull(timings.openTimeoutMs) { events.receive() }
             if (first !is WsEvent.Open) {
                 if (first is WsEvent.Failure && first.httpCode == HTTP_UNAUTHORIZED) tokens.invalidate()
-                return@coroutineScope false
+                return@coroutineScope SessionEnd.NotOpened
             }
             val session = LiveSession(ws)
             live = session
             state.value = ConnectionState.Connected
             val pump = launch { pumpOutbox(session, me.value) }
             val upkeep = launch { upkeep(me.value) }
+            var end = SessionEnd.Closed
             for (event in events) {
                 when (event) {
                     is WsEvent.Text -> if (!handleFrame(session, me.value, event.text)) break
+                    is WsEvent.Closed -> {
+                        if (event.code == CLOSE_TOKEN_EXPIRED) {
+                            tokens.invalidate()
+                            end = SessionEnd.TokenExpired
+                        }
+                        break
+                    }
                     else -> break
                 }
             }
             pump.cancel()
             upkeep.cancel()
-            true
+            end
         } finally {
             live = null
             ws.cancel()
@@ -526,7 +580,7 @@ class MessagingEngine(
     private sealed interface WsEvent {
         data object Open : WsEvent
         data class Text(val text: String) : WsEvent
-        data object Closed : WsEvent
+        data class Closed(val code: Int) : WsEvent
         data class Failure(val httpCode: Int?) : WsEvent
     }
 
@@ -541,11 +595,11 @@ class MessagingEngine(
 
         override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
             webSocket.close(code, null)
-            events.trySend(WsEvent.Closed)
+            events.trySend(WsEvent.Closed(code))
         }
 
         override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-            events.trySend(WsEvent.Closed)
+            events.trySend(WsEvent.Closed(code))
         }
 
         override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
@@ -556,6 +610,9 @@ class MessagingEngine(
     companion object {
         const val UNKNOWN_CONTACT = "Unknown contact"
         private const val HTTP_UNAUTHORIZED = 401
+
+        /** The server's close code for a socket whose bearer token expired. */
+        const val CLOSE_TOKEN_EXPIRED = 4001
         private const val MAX_SHIFT = 20
         private const val HELD_GROUP_TTL_MS = 30L * 24 * 60 * 60 * 1000
 

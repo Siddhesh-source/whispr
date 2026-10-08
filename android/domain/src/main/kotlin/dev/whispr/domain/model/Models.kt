@@ -43,6 +43,9 @@ sealed interface AuthError {
 
     /** The identity key could not be created, read, or used. */
     data object Storage : AuthError
+
+    /** The account was deleted on the server, but erasing this device's data partly failed. */
+    data object WipeIncomplete : AuthError
 }
 
 sealed interface AuthResult<out T> {

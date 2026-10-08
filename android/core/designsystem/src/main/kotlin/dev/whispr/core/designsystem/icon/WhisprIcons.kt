@@ -8,7 +8,9 @@ import dev.whispr.core.designsystem.R
 /**
  * The app's icon set: Material Symbols Rounded (Apache 2.0), vendored as
  * vector drawables so we do not depend on the deprecated extended-icons
- * artifact. Directional icons are auto-mirrored for RTL.
+ * artifact. Reply, forward, delete, timer, search and close use the 24dp
+ * Material Icons paths (also Apache 2.0). Directional icons are
+ * auto-mirrored for RTL.
  */
 object WhisprIcons {
     val Back: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ic_arrow_back)
@@ -41,4 +43,10 @@ object WhisprIcons {
     val Download: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ic_download)
     val React: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ic_mood)
     val Leave: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ic_logout)
+    val Reply: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ic_reply)
+    val Forward: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ic_forward)
+    val Delete: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ic_delete)
+    val Timer: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ic_timer)
+    val Search: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ic_search)
+    val Close: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ic_close)
 }

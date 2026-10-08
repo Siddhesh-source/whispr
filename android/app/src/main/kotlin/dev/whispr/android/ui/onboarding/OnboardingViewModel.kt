@@ -77,7 +77,7 @@ class OnboardingViewModel @Inject constructor(
     private fun AuthError.toError() = when (this) {
         AuthError.Network -> OnboardingError.Network
         AuthError.Server -> OnboardingError.Server
-        AuthError.Storage -> OnboardingError.Storage
+        AuthError.Storage, AuthError.WipeIncomplete -> OnboardingError.Storage
         AuthError.Rejected -> OnboardingError.Rejected
         AuthError.InvalidInput -> OnboardingError.NameInvalid
     }

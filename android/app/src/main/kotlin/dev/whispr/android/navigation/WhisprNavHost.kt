@@ -15,6 +15,7 @@ import dev.whispr.android.ui.onboarding.OnboardingRoute
 import dev.whispr.android.ui.profile.EditProfileRoute
 import dev.whispr.android.ui.profile.MyCodeRoute
 import dev.whispr.android.ui.scan.ScanContactRoute
+import dev.whispr.android.ui.search.SearchRoute
 import dev.whispr.android.ui.settings.SettingsRoute
 import dev.whispr.android.ui.verify.VerifyRoute
 import dev.whispr.domain.usecase.StartDestination
@@ -44,6 +45,8 @@ import kotlinx.serialization.Serializable
 
 @Serializable object EditProfileDestination
 
+@Serializable object SearchDestination
+
 @Composable
 fun WhisprNavHost(start: StartDestination) {
     val nav = rememberNavController()
@@ -70,6 +73,14 @@ fun WhisprNavHost(start: StartDestination) {
                 onNewChat = { nav.navigate(AddContactDestination) { launchSingleTop = true } },
                 onOpenGroup = { g -> nav.navigate(GroupChatDestination(g.value)) { launchSingleTop = true } },
                 onNewGroup = { nav.navigate(NewGroupDestination) { launchSingleTop = true } },
+                onSearch = { nav.navigate(SearchDestination) { launchSingleTop = true } },
+            )
+        }
+        composable<SearchDestination> {
+            SearchRoute(
+                onBack = { nav.popBackStack() },
+                onOpenChat = { peer -> nav.navigate(ChatDestination(peer.value)) },
+                onOpenGroup = { g -> nav.navigate(GroupChatDestination(g.value)) },
             )
         }
         composable<AddContactDestination> {

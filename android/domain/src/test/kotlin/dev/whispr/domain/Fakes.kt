@@ -61,6 +61,8 @@ class FakeAuthRepository : AuthRepository {
         authenticateCalls++
         return authenticateResult
     }
+
+    override suspend fun deleteAccount(): AuthResult<Unit> = AuthResult.Ok(Unit)
 }
 
 val networkError = AuthResult.Err(AuthError.Network)

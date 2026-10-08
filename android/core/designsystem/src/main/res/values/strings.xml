@@ -31,4 +31,8 @@
     <string name="ds_reaction">%1$s, %2$d</string>
     <string name="ds_reaction_mine">%1$s, %2$d, including yours</string>
     <string name="ds_reactions">Reactions: %1$s</string>
+    <string name="ds_message_actions">Message actions</string>
+    <string name="ds_forwarded">Forwarded</string>
+    <string name="ds_quote">Replying to %1$s: %2$s</string>
+    <string name="ds_disappearing">Disappearing message</string>
 </resources>

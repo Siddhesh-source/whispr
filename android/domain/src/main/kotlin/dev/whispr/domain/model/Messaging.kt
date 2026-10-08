@@ -2,6 +2,7 @@ package dev.whispr.domain.model
 
 import java.nio.ByteBuffer
 import java.security.MessageDigest
+import java.time.Duration
 import java.time.Instant
 import java.util.UUID
 
@@ -76,7 +77,64 @@ data class Message(
     val reactions: List<Reaction> = emptyList(),
     /** A group event ("Sam added Alex"), shown centred, never sent. */
     val system: Boolean = false,
+    /** The message this one replies to. */
+    val quote: Quote? = null,
+    val forwarded: Boolean = false,
+    /** Deleted for everyone by its author: shown as a tombstone, with no content. */
+    val deleted: Boolean = false,
+    /** Disappearing messages: the timer this message was sent with. */
+    val expiresIn: Duration? = null,
+    /** When it will be deleted; null until its timer starts (incoming: when read). */
+    val expiresAt: Instant? = null,
 )
+
+/**
+ * The quoted message above a reply, resolved from the local database. Only
+ * the reference travels; [found] is false once we no longer have it
+ * (deleted, expired, or never received).
+ */
+data class Quote(
+    val messageId: String,
+    val outgoing: Boolean,
+    val authorName: String?,
+    val text: String,
+    val attachmentKind: AttachmentKind?,
+    val found: Boolean,
+)
+
+/** A local search result: the message and where it is. */
+data class SearchHit(
+    val conversation: ConversationId,
+    val title: String,
+    val message: Message,
+    /** Set for a 1:1 chat. */
+    val peer: UserId?,
+    /** Set for a group. */
+    val group: GroupId?,
+)
+
+/** Rules shared by the UI and the data layer. */
+object MessageRules {
+    /** Disappearing-message timers offered, in seconds. 0 is off. */
+    val TIMER_OPTIONS: List<Long> = listOf(0L, 5 * 60L, 60 * 60L, 24 * 60 * 60L, 7 * 24 * 60 * 60L)
+
+    /** The longest timer accepted from a peer (four weeks). */
+    const val MAX_TIMER_SECONDS: Long = 28L * 24 * 60 * 60
+
+    /** "Delete for everyone" is offered for our own messages this long after sending. */
+    val DELETE_FOR_EVERYONE_WINDOW: Duration = Duration.ofHours(24)
+
+    fun canDeleteForEveryone(m: Message, now: Instant): Boolean = m.outgoing &&
+        !m.system &&
+        !m.deleted &&
+        m.notice == null &&
+        m.status != MessageStatus.Failed &&
+        m.status != MessageStatus.Sending &&
+        Duration.between(m.timestamp, now) <= DELETE_FOR_EVERYONE_WINDOW
+
+    /** Only shown content can be replied to, copied or forwarded. */
+    fun isContent(m: Message): Boolean = !m.system && !m.deleted && m.notice == null
+}
 
 /** Why a message is shown as a stand-in instead of its text. */
 enum class MessageNotice {
@@ -137,5 +195,12 @@ sealed interface ProfileResult {
     data class Failed(val error: AuthError) : ProfileResult
 }
 
-/** Privacy settings for activity metadata. Both are off by default. */
-data class PrivacySettings(val readReceipts: Boolean = false, val typingIndicators: Boolean = false)
+/**
+ * Privacy settings. Read receipts and typing indicators are off by default;
+ * screen security (no screenshots, recordings or recents thumbnails) is on.
+ */
+data class PrivacySettings(
+    val readReceipts: Boolean = false,
+    val typingIndicators: Boolean = false,
+    val screenSecurity: Boolean = true,
+)

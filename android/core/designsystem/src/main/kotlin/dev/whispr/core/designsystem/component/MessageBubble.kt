@@ -31,6 +31,7 @@ import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import dev.whispr.core.designsystem.R
 import dev.whispr.core.designsystem.icon.WhisprIcons
 import dev.whispr.core.designsystem.theme.WhisprTheme
@@ -45,15 +46,22 @@ enum class DeliveryStatus { Sending, Sent, Delivered, Read, Failed }
 /** One emoji under a bubble: how many reacted with it, and whether we did. */
 data class ReactionChip(val emoji: String, val count: Int, val mine: Boolean)
 
+/** The quoted message above a reply. */
+data class QuotePreview(val author: String, val text: String)
+
 /**
  * One chat message. Screen readers hear a single sentence: sender, time,
  * text, and (for outgoing) delivery status. Failed outgoing messages are
- * tappable to retry; a long press (or the "Add reaction" action) reacts.
+ * tappable to retry; a long press (or the "Message actions" / "Add reaction"
+ * accessibility actions) opens [onActions], or reacts when only [onReact] is set.
  *
  * @param time a pre-formatted, localized time string.
  * @param senderName announced for incoming messages; shown above the text when [showSender] (groups).
  * @param notice true when [text] is a system notice standing in for the message (shown in italics).
  * @param attachment an image, file or voice row shown above the text.
+ * @param quote the message this one replies to.
+ * @param forwarded shows a "Forwarded" label.
+ * @param expiring shows a timer next to the time (a disappearing message).
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -72,6 +80,10 @@ fun MessageBubble(
     reactions: List<ReactionChip> = emptyList(),
     onReact: (() -> Unit)? = null,
     onReactionClick: ((String) -> Unit)? = null,
+    onActions: (() -> Unit)? = null,
+    quote: QuotePreview? = null,
+    forwarded: Boolean = false,
+    expiring: Boolean = false,
 ) {
     val outgoing = direction == BubbleDirection.Outgoing
     val failed = outgoing && status == DeliveryStatus.Failed
@@ -89,7 +101,12 @@ fun MessageBubble(
 
     val statusLabel = status?.takeIf { outgoing }?.let { stringResource(it.labelRes()) }
     val reactionText = reactions.joinToString { "${it.emoji} ${it.count}" }
+    val forwardedLabel = stringResource(R.string.ds_forwarded)
+    val quoteLabel = quote?.let { stringResource(R.string.ds_quote, it.author, it.text) }
+    val expiringLabel = stringResource(R.string.ds_disappearing)
     val spoken = buildString {
+        if (forwarded) append(forwardedLabel).append(". ")
+        if (quoteLabel != null) append(quoteLabel).append(". ")
         append(
             if (outgoing) {
                 stringResource(R.string.ds_bubble_outgoing, time, text)
@@ -99,10 +116,13 @@ fun MessageBubble(
         )
         if (statusLabel != null) append(". ").append(statusLabel)
         if (reactions.isNotEmpty()) append(". ").append(stringResource(R.string.ds_reactions, reactionText))
+        if (expiring) append(". ").append(expiringLabel)
     }
     val retryLabel = stringResource(R.string.ds_retry_send)
     val reactLabel = stringResource(R.string.ds_react)
+    val actionsLabel = stringResource(R.string.ds_message_actions)
     val retry = onRetry.takeIf { failed }
+    val longPress = onActions ?: onReact
 
     BoxWithConstraints(modifier.fillMaxWidth()) {
         val maxBubbleWidth = maxWidth * WhisprTheme.sizes.bubbleMaxWidthFraction
@@ -117,8 +137,8 @@ fun MessageBubble(
                 modifier = Modifier
                     .widthIn(max = maxBubbleWidth)
                     .then(
-                        if (retry != null || onReact != null) {
-                            Modifier.combinedClickable(onClick = { retry?.invoke() }, onLongClick = onReact)
+                        if (retry != null || longPress != null) {
+                            Modifier.combinedClickable(onClick = { retry?.invoke() }, onLongClick = longPress)
                         } else {
                             Modifier
                         },
@@ -133,14 +153,20 @@ fun MessageBubble(
                                 true
                             }
                         }
-                        if (onReact != null) {
-                            customActions = listOf(
-                                CustomAccessibilityAction(reactLabel) {
-                                    onReact()
+                        customActions = listOfNotNull(
+                            onActions?.let {
+                                CustomAccessibilityAction(actionsLabel) {
+                                    it()
                                     true
-                                },
-                            )
-                        }
+                                }
+                            },
+                            onReact?.let {
+                                CustomAccessibilityAction(reactLabel) {
+                                    it()
+                                    true
+                                }
+                            },
+                        )
                     },
             ) {
                 Column(
@@ -155,6 +181,25 @@ fun MessageBubble(
                             modifier = Modifier.clearAndSetSemantics { },
                         )
                     }
+                    if (forwarded) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(WhisprTheme.spacing.xxs),
+                            modifier = Modifier.clearAndSetSemantics { },
+                        ) {
+                            Icon(
+                                WhisprIcons.Forward,
+                                contentDescription = null,
+                                modifier = Modifier.size(WhisprTheme.sizes.iconSmall),
+                            )
+                            Text(
+                                forwardedLabel,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontStyle = FontStyle.Italic,
+                            )
+                        }
+                    }
+                    if (quote != null) QuoteBlock(quote)
                     attachment?.invoke()
                     if (text.isNotEmpty()) {
                         Text(
@@ -169,6 +214,13 @@ fun MessageBubble(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(WhisprTheme.spacing.xs),
                     ) {
+                        if (expiring) {
+                            Icon(
+                                WhisprIcons.Timer,
+                                contentDescription = null,
+                                modifier = Modifier.size(WhisprTheme.sizes.iconSmall),
+                            )
+                        }
                         Text(
                             text = if (failed) statusLabel.orEmpty() else time,
                             style = MaterialTheme.typography.labelSmall,
@@ -221,6 +273,21 @@ private fun ReactionRow(reactions: List<ReactionChip>, onClick: ((String) -> Uni
                     ),
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun QuoteBlock(quote: QuotePreview) {
+    Surface(
+        shape = MaterialTheme.shapes.small,
+        color = MaterialTheme.colorScheme.surfaceContainerHighest,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        modifier = Modifier.clearAndSetSemantics { },
+    ) {
+        Column(Modifier.padding(horizontal = WhisprTheme.spacing.sm, vertical = WhisprTheme.spacing.xxs)) {
+            Text(quote.author, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+            Text(quote.text, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
         }
     }
 }
@@ -313,6 +380,14 @@ private fun MessageBubblePreview() {
                 BubbleDirection.Outgoing,
                 groupPosition = BubbleGroupPosition.Last,
                 status = DeliveryStatus.Sending,
+            )
+            MessageBubble(
+                "Saturday works.",
+                "10:43",
+                BubbleDirection.Incoming,
+                quote = QuotePreview("You", "Are you free this weekend?"),
+                forwarded = true,
+                expiring = true,
             )
             MessageBubble(
                 "This one failed.",

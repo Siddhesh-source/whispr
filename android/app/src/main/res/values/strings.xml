@@ -48,6 +48,12 @@
 
     <!-- Chat list -->
     <string name="chats_new_chat">New chat</string>
+    <string name="chats_search">Search messages</string>
+    <string name="search_title">Search messages</string>
+    <string name="search_hint">Search</string>
+    <string name="search_local_only">Searches the messages stored on this phone. Nothing you type is sent anywhere.</string>
+    <string name="search_none_title">No results</string>
+    <string name="search_none_message">No messages contain “%1$s”.</string>
     <string name="chats_you_prefix">You: %1$s</string>
 
     <!-- Add contact -->
@@ -75,6 +81,17 @@
     <string name="settings_typing">Typing indicators</string>
     <string name="settings_typing_body">Let contacts see when you\'re typing. When off, you won\'t see theirs either.</string>
     <string name="settings_copy_id">Copy account ID</string>
+    <string name="settings_screen_security">Screen security</string>
+    <string name="settings_screen_security_body">Block screenshots and screen recording, and hide Whispr\'s contents in the recent apps list.</string>
+    <string name="settings_delete_account">Delete account</string>
+    <string name="settings_delete_title">Delete your account?</string>
+    <string name="settings_delete_message">Your account is removed from the server, and every message, contact, key and file on this phone is erased. This can\'t be undone. Your contacts keep the messages they already have.</string>
+    <string name="settings_delete_confirm">Delete everything</string>
+    <string name="settings_delete_cancel">Keep my account</string>
+    <string name="settings_delete_working">Deleting your account…</string>
+    <string name="settings_delete_failed_network">Couldn\'t reach the server. Nothing was deleted. Try again when you\'re online.</string>
+    <string name="settings_delete_failed">The server refused the request. Nothing was deleted.</string>
+    <string name="settings_delete_failed_local">Your account was deleted from the server, but some data on this phone couldn\'t be erased. Uninstall Whispr to remove it.</string>
 
     <!-- Notifications -->
     <string name="notification_channel_messages">Messages</string>
@@ -197,6 +214,31 @@
     <string name="chat_error_too_large">That file is larger than 25 MB.</string>
     <string name="chat_error_unreadable">Couldn\'t read that file.</string>
     <string name="chat_error_not_allowed">You can\'t send here right now.</string>
+    <string name="chat_error_delete_failed">Couldn\'t delete that message for everyone. It may be too old.</string>
+    <string name="chat_action_react">React</string>
+    <string name="chat_action_reply">Reply</string>
+    <string name="chat_action_copy">Copy text</string>
+    <string name="chat_action_forward">Forward</string>
+    <string name="chat_action_delete_me">Delete for me</string>
+    <string name="chat_action_delete_everyone">Delete for everyone</string>
+    <string name="chat_delete_me_message">Delete this message from this phone? Others still have their copy.</string>
+    <string name="chat_delete_everyone_message">Delete this message for everyone in the chat? Their apps will remove it, but anyone could have already read or copied it.</string>
+    <string name="chat_delete_confirm">Delete</string>
+    <string name="chat_cancel">Cancel</string>
+    <string name="chat_forward_title">Forward to</string>
+    <string name="chat_forward_empty">No other chats to forward to.</string>
+    <string name="chat_reply_to">Replying to %1$s</string>
+    <string name="chat_reply_cancel">Cancel reply</string>
+    <string name="chat_you">You</string>
+    <string name="chat_deleted">This message was deleted</string>
+    <string name="chat_quote_missing">Original message not found</string>
+    <string name="chat_timer">Disappearing messages</string>
+    <string name="chat_timer_off">Off</string>
+    <string name="chat_timer_5m">5 minutes</string>
+    <string name="chat_timer_1h">1 hour</string>
+    <string name="chat_timer_1d">1 day</string>
+    <string name="chat_timer_1w">1 week</string>
+    <string name="chat_timer_custom">%1$d seconds</string>
 
     <string name="group_new_title">New group</string>
     <string name="group_create">Create group</string>

@@ -18,7 +18,9 @@ import dev.whispr.data.messaging.MessagingEngine
 import dev.whispr.domain.model.ConversationId
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.launch
 
 /** The conversation currently on screen, so we don't notify about it. */
 @Singleton
@@ -37,8 +39,12 @@ class MessageNotifier @Inject constructor(
     private val engine: MessagingEngine,
     private val active: ActiveConversation,
 ) {
-    suspend fun run() {
+    suspend fun run(): Unit = coroutineScope {
         createChannel()
+        // A deleted or disappeared message must not live on in the notification shade.
+        launch {
+            engine.removed.collect { NotificationManagerCompat.from(context).cancel(it.value.hashCode()) }
+        }
         engine.incoming.collect { msg ->
             if (msg.conversationId != active.current.value) notify(msg.conversationId, msg.senderName, msg.text)
         }

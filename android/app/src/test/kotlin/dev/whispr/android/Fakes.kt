@@ -57,6 +57,13 @@ class FakeAuth : AuthRepository {
         completedAuthentications++
         return r
     }
+
+    var deleteResult: AuthResult<Unit> = AuthResult.Ok(Unit)
+    var deleteCalls = 0
+    override suspend fun deleteAccount(): AuthResult<Unit> {
+        deleteCalls++
+        return deleteResult
+    }
 }
 
 class FakeConnectivity(online: Boolean = true) : ConnectivityRepository {
@@ -79,7 +86,9 @@ class FakeMessaging : dev.whispr.domain.repository.MessagingRepository {
     override fun observeConversations() = conversations
     override fun observeMessages(conversation: dev.whispr.domain.model.ConversationId) = messages
     var sendAllowed = true
-    override suspend fun sendText(peer: UserId, text: String): Boolean {
+    val replies = mutableListOf<String?>()
+    override suspend fun sendText(peer: UserId, text: String, replyTo: String?): Boolean {
+        replies += replyTo
         if (sendAllowed) sent += peer to text
         return sendAllowed
     }
@@ -101,7 +110,12 @@ class FakeMessaging : dev.whispr.domain.repository.MessagingRepository {
     val downloads = mutableListOf<String>()
     var bytes: ByteArray? = null
 
-    override suspend fun sendGroupText(group: dev.whispr.domain.model.GroupId, text: String): Boolean {
+    override suspend fun sendGroupText(
+        group: dev.whispr.domain.model.GroupId,
+        text: String,
+        replyTo: String?,
+    ): Boolean {
+        replies += replyTo
         if (sendAllowed) groupSent += group to text
         return sendAllowed
     }
@@ -125,6 +139,24 @@ class FakeMessaging : dev.whispr.domain.repository.MessagingRepository {
         conversation: dev.whispr.domain.model.ConversationId,
         messageId: String,
     ): String? = null
+
+    val actions = mutableListOf<String>()
+    val timer = MutableStateFlow(0L)
+    var searchHits = emptyList<dev.whispr.domain.model.SearchHit>()
+    override suspend fun forward(
+        from: dev.whispr.domain.model.ConversationId,
+        messageId: String,
+        to: dev.whispr.domain.model.ConversationId,
+    ) = dev.whispr.domain.model.SendResult.Ok.also { actions += "forward:$messageId:${to.value}" }
+    override suspend fun deleteForMe(conversation: dev.whispr.domain.model.ConversationId, messageId: String) {
+        actions += "deleteForMe:$messageId"
+    }
+    override suspend fun deleteForEveryone(conversation: dev.whispr.domain.model.ConversationId, messageId: String) =
+        true.also { actions += "deleteForEveryone:$messageId" }
+    override fun observeTimer(conversation: dev.whispr.domain.model.ConversationId) = timer
+    override suspend fun setTimer(conversation: dev.whispr.domain.model.ConversationId, seconds: Long) =
+        true.also { timer.value = seconds }
+    override suspend fun search(query: String) = searchHits.also { actions += "search:$query" }
 }
 
 class FakeGroups : dev.whispr.domain.repository.GroupsRepository {
@@ -213,6 +245,9 @@ class FakeSettings : dev.whispr.domain.repository.SettingsRepository {
     }
     override suspend fun setTypingIndicators(enabled: Boolean) {
         privacy.value = privacy.value.copy(typingIndicators = enabled)
+    }
+    override suspend fun setScreenSecurity(enabled: Boolean) {
+        privacy.value = privacy.value.copy(screenSecurity = enabled)
     }
 }
 

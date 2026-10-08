@@ -150,6 +150,14 @@ class MessagingEngineTest {
     }
 
     @Test
+    fun tokenExpiryCloseDropsTheTokenAndReconnects() = runBlocking {
+        eventually("connected") { gateway.connections.size == 1 }
+        gateway.drop(4001, "token expired")
+        eventually("reconnected") { gateway.connections.size >= 2 }
+        assertEquals(1, tokens.invalidations.get())
+    }
+
+    @Test
     fun incomingIsStoredBeforeAckAndRedeliveryIsDeduplicated() = runBlocking {
         eventually("connected") { gateway.current != null }
         val id = UUID.randomUUID().toString()

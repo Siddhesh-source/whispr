@@ -7,13 +7,14 @@ import dev.whispr.domain.repository.SettingsRepository
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
-/** Privacy toggles, stored in the encrypted database. Both default to off. */
+/** Privacy toggles, stored in the encrypted database. Receipts and typing default to off, screen security to on. */
 class RoomSettingsRepository(private val dao: SettingDao) : SettingsRepository {
     override fun observePrivacy(): Flow<PrivacySettings> = dao.observeAll().map { rows ->
         val map = rows.associate { it.key to it.value }
         PrivacySettings(
             readReceipts = map[READ_RECEIPTS] == "true",
             typingIndicators = map[TYPING] == "true",
+            screenSecurity = map[SCREEN_SECURITY] != "false",
         )
     }
 
@@ -21,8 +22,12 @@ class RoomSettingsRepository(private val dao: SettingDao) : SettingsRepository {
 
     override suspend fun setTypingIndicators(enabled: Boolean) = dao.put(SettingEntity(TYPING, enabled.toString()))
 
+    override suspend fun setScreenSecurity(enabled: Boolean) =
+        dao.put(SettingEntity(SCREEN_SECURITY, enabled.toString()))
+
     private companion object {
         const val READ_RECEIPTS = "privacy.read_receipts"
         const val TYPING = "privacy.typing_indicators"
+        const val SCREEN_SECURITY = "privacy.screen_security"
     }
 }

@@ -1,6 +1,7 @@
 package dev.whispr.android.ui.settings
 
 import android.content.ClipData
+import android.content.Intent
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -14,6 +15,8 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -21,14 +24,22 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.heading
@@ -55,6 +66,10 @@ fun SettingsRoute(
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val deletion by viewModel.deletion.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    // Everything local is gone: start over from onboarding in a fresh process.
+    LaunchedEffect(deletion) { if (deletion == Deletion.Done) restartApp(context) }
     SettingsScreen(
         state = state,
         onBack = onBack,
@@ -62,7 +77,18 @@ fun SettingsRoute(
         onTypingIndicators = viewModel::setTypingIndicators,
         onEditProfile = onEditProfile,
         onMyCode = onMyCode,
+        onScreenSecurity = viewModel::setScreenSecurity,
+        deletion = deletion,
+        onDeleteAccount = viewModel::deleteAccount,
+        onDismissDeletion = viewModel::dismissDeletionError,
     )
+}
+
+private fun restartApp(context: android.content.Context) {
+    context.packageManager.getLaunchIntentForPackage(context.packageName)?.let {
+        context.startActivity(it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK))
+    }
+    Runtime.getRuntime().exit(0)
 }
 
 @Composable
@@ -73,7 +99,12 @@ fun SettingsScreen(
     onTypingIndicators: (Boolean) -> Unit = {},
     onEditProfile: () -> Unit = {},
     onMyCode: () -> Unit = {},
+    onScreenSecurity: (Boolean) -> Unit = {},
+    deletion: Deletion = Deletion.Idle,
+    onDeleteAccount: () -> Unit = {},
+    onDismissDeletion: () -> Unit = {},
 ) {
+    var confirming by remember { mutableStateOf(false) }
     Scaffold(
         containerColor = MaterialTheme.colorScheme.surface,
         topBar = { WhisprTopBar(title = stringResource(R.string.settings_title), onNavigateBack = onBack) },
@@ -94,10 +125,79 @@ fun SettingsScreen(
                     onTypingIndicators,
                     onEditProfile,
                     onMyCode,
+                    onScreenSecurity,
+                    onDelete = { confirming = true },
                 )
             }
         }
     }
+    if (confirming) {
+        DeleteAccountDialog(
+            onConfirm = {
+                confirming = false
+                onDeleteAccount()
+            },
+            onDismiss = { confirming = false },
+        )
+    }
+    when (deletion) {
+        Deletion.Idle -> Unit
+        Deletion.Working, Deletion.Done -> AlertDialog(
+            onDismissRequest = {},
+            confirmButton = {},
+            text = {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(WhisprTheme.spacing.md),
+                ) {
+                    CircularProgressIndicator()
+                    Text(stringResource(R.string.settings_delete_working))
+                }
+            },
+        )
+        Deletion.FailedNetwork, Deletion.Failed, Deletion.FailedLocal -> AlertDialog(
+            onDismissRequest = onDismissDeletion,
+            confirmButton = {
+                TextButton(onClick = onDismissDeletion) { Text(stringResource(R.string.chat_error_ok)) }
+            },
+            text = {
+                Text(
+                    stringResource(
+                        when (deletion) {
+                            Deletion.FailedNetwork -> R.string.settings_delete_failed_network
+                            Deletion.FailedLocal -> R.string.settings_delete_failed_local
+                            else -> R.string.settings_delete_failed
+                        },
+                    ),
+                )
+            },
+        )
+    }
+}
+
+@Composable
+private fun DeleteAccountDialog(onConfirm: () -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.settings_delete_title)) },
+        text = {
+            // Ignore taps while another app draws over this dialog (tapjacking).
+            val view = LocalView.current
+            DisposableEffect(view) {
+                view.filterTouchesWhenObscured = true
+                onDispose { }
+            }
+            Text(stringResource(R.string.settings_delete_message))
+        },
+        confirmButton = {
+            TextButton(onClick = onConfirm) {
+                Text(stringResource(R.string.settings_delete_confirm), color = MaterialTheme.colorScheme.error)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.settings_delete_cancel)) }
+        },
+    )
 }
 
 @Composable
@@ -107,6 +207,8 @@ private fun SettingsContent(
     onTypingIndicators: (Boolean) -> Unit,
     onEditProfile: () -> Unit,
     onMyCode: () -> Unit,
+    onScreenSecurity: (Boolean) -> Unit,
+    onDelete: () -> Unit,
 ) {
     val clipboard = LocalClipboard.current
     val clipScope = rememberCoroutineScope()
@@ -163,6 +265,13 @@ private fun SettingsContent(
                     onTypingIndicators,
                 )
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                ToggleRow(
+                    stringResource(R.string.settings_screen_security),
+                    stringResource(R.string.settings_screen_security_body),
+                    state.screenSecurity,
+                    onScreenSecurity,
+                )
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 SettingRow(
                     stringResource(R.string.settings_privacy),
                     stringResource(
@@ -171,6 +280,13 @@ private fun SettingsContent(
                 )
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 SettingRow(stringResource(R.string.settings_version), state.version)
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                NavRow(
+                    stringResource(R.string.settings_delete_account),
+                    WhisprIcons.Delete,
+                    onDelete,
+                    tint = MaterialTheme.colorScheme.error,
+                )
             }
         }
     }
@@ -178,7 +294,12 @@ private fun SettingsContent(
 
 /** A row that opens another screen. */
 @Composable
-private fun NavRow(label: String, icon: ImageVector, onClick: () -> Unit) {
+private fun NavRow(
+    label: String,
+    icon: ImageVector,
+    onClick: () -> Unit,
+    tint: androidx.compose.ui.graphics.Color? = null,
+) {
     Row(
         Modifier
             .fillMaxWidth()
@@ -188,8 +309,8 @@ private fun NavRow(label: String, icon: ImageVector, onClick: () -> Unit) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(WhisprTheme.spacing.lg),
     ) {
-        Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(label, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface)
+        Icon(icon, contentDescription = null, tint = tint ?: MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(label, style = MaterialTheme.typography.bodyLarge, color = tint ?: MaterialTheme.colorScheme.onSurface)
     }
 }
 

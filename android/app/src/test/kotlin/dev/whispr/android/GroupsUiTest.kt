@@ -276,6 +276,7 @@ class GroupsUiTest {
         val picked = mutableListOf<Pair<String, String?>>()
         chat(groupState(msg("m1", text = "react to me")), onReact = { id, e -> picked += id to e })
         rule.onNodeWithContentDescription("react to me", substring = true).performTouchInput { longClick() }
+        rule.onNodeWithText("React").performClick()
         rule.onNodeWithText("❤️").performClick()
         assertEquals(listOf("m1" to "❤️"), picked)
     }

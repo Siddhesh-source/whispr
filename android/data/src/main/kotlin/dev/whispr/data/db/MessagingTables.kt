@@ -64,6 +64,40 @@ data class MessageEntity(
     val placeholder: String? = null,
     /** A local group event ("Sam added Alex"); never sent. */
     @ColumnInfo(defaultValue = "0") val system: Boolean = false,
+    /** A reply: the quoted message's logical ID and author (user ID). Resolved locally when shown. */
+    val quoteId: String? = null,
+    val quoteAuthor: String? = null,
+    @ColumnInfo(defaultValue = "0") val forwarded: Boolean = false,
+    /** Deleted for everyone by its author: content cleared, a tombstone stays. */
+    @ColumnInfo(defaultValue = "0") val deleted: Boolean = false,
+    /** Disappearing messages: the timer it was sent with, in seconds. */
+    val expiresIn: Long? = null,
+    /** When it is deleted (epoch ms); set when the timer starts (sent, or read by us). */
+    val expireAt: Long? = null,
+)
+
+/** Per-conversation settings that every participant shares: the disappearing-message timer. */
+@Entity(tableName = "conversation_settings")
+data class ConversationSettingEntity(
+    @PrimaryKey val conversationId: String,
+    /** Seconds; 0 is off. */
+    val timer: Long,
+    /** The sender's timestamp of the change that set it; the newest change wins. */
+    val timerTs: Long,
+)
+
+/** One search result row. */
+data class SearchRow(
+    val localOrder: Long,
+    val messageId: String,
+    val conversationId: String,
+    val peerId: String,
+    val outgoing: Boolean,
+    val body: String,
+    val timestamp: Long,
+    val status: String?,
+    val groupName: String?,
+    val contactName: String?,
 )
 
 /** States of a "couldn't decrypt" stand-in. They only move forward, except that a late resend may still recover an unrecoverable one. */
@@ -223,6 +257,32 @@ interface MessageDao {
 
     @Query("UPDATE messages SET readByMe = 1 WHERE conversationId = :conversationId AND outgoing = 0")
     suspend fun markAllReadByMe(conversationId: String)
+
+    /** Reading starts the clock of disappearing incoming messages. */
+    @Query(
+        """UPDATE messages SET expireAt = :now + expiresIn * 1000
+           WHERE conversationId = :conversationId AND outgoing = 0 AND expiresIn IS NOT NULL AND expireAt IS NULL""",
+    )
+    suspend fun startTimers(conversationId: String, now: Long)
+
+    /**
+     * Case-insensitive (ASCII) substring search over shown text. [pattern] is
+     * already escaped for LIKE with a backslash as the escape character.
+     */
+    @Query(
+        """SELECT m.localOrder, m.messageId, m.conversationId, m.peerId, m.outgoing, m.body, m.timestamp, m.status,
+                  g.name AS groupName, c.displayName AS contactName
+           FROM messages m
+           LEFT JOIN groups g ON g.groupId = m.conversationId
+           LEFT JOIN contacts c ON c.userId = m.peerId
+           WHERE m.body LIKE :pattern ESCAPE '\' AND m.placeholder IS NULL AND m.deleted = 0 AND m.system = 0
+             AND (g.groupId IS NOT NULL OR c.isRequest = 0)
+           ORDER BY m.timestamp DESC LIMIT :limit""",
+    )
+    suspend fun search(pattern: String, limit: Int): List<SearchRow>
+
+    @Query("SELECT * FROM conversation_settings WHERE conversationId = :conversationId")
+    fun observeSetting(conversationId: String): Flow<ConversationSettingEntity?>
 }
 
 @Dao

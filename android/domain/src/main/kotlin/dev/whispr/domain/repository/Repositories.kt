@@ -18,6 +18,7 @@ import dev.whispr.domain.model.MyProfile
 import dev.whispr.domain.model.PrivacySettings
 import dev.whispr.domain.model.ProfileResult
 import dev.whispr.domain.model.SafetyNumber
+import dev.whispr.domain.model.SearchHit
 import dev.whispr.domain.model.SendResult
 import dev.whispr.domain.model.SessionState
 import dev.whispr.domain.model.UserId
@@ -58,6 +59,13 @@ interface AuthRepository {
 
     /** Runs challenge-response for the registered account and holds the token in memory. */
     suspend fun authenticate(): AuthResult<Unit>
+
+    /**
+     * Deletes the account on the server (proving possession of the identity
+     * key with a fresh signed challenge), then wipes everything on this
+     * device. Irreversible. On success the app must restart.
+     */
+    suspend fun deleteAccount(): AuthResult<Unit>
 }
 
 interface ConnectivityRepository {
@@ -132,10 +140,35 @@ interface MessagingRepository {
      * Returns false (and stores nothing) if the contact's key changed and
      * the user has not acknowledged it.
      */
-    suspend fun sendText(peer: UserId, text: String): Boolean
+    suspend fun sendText(peer: UserId, text: String, replyTo: String? = null): Boolean
 
-    /** Sends to every current group member, encrypted once with our sender key. False if we can't send there. */
-    suspend fun sendGroupText(group: GroupId, text: String): Boolean
+    /**
+     * Sends to every current group member, encrypted once with our sender key. False if we can't send there.
+     * [replyTo] quotes a message in the same conversation.
+     */
+    suspend fun sendGroupText(group: GroupId, text: String, replyTo: String? = null): Boolean
+
+    /**
+     * Sends a copy of a message to another conversation, marked as forwarded.
+     * Media is re-encrypted with a fresh key and uploaded again, so the
+     * server cannot link the copy to the original. Media must be downloaded.
+     */
+    suspend fun forward(from: ConversationId, messageId: String, to: ConversationId): SendResult
+
+    /** Removes a message from this device only. */
+    suspend fun deleteForMe(conversation: ConversationId, messageId: String)
+
+    /** Deletes our own message for everyone (within [MessageRules.DELETE_FOR_EVERYONE_WINDOW]). */
+    suspend fun deleteForEveryone(conversation: ConversationId, messageId: String): Boolean
+
+    /** The conversation's disappearing-message timer in seconds (0 = off). */
+    fun observeTimer(conversation: ConversationId): Flow<Long>
+
+    /** Sets the timer for everyone in the conversation. False if we can't send there. */
+    suspend fun setTimer(conversation: ConversationId, seconds: Long): Boolean
+
+    /** Searches message text on this device (case-insensitive for ASCII), newest first. */
+    suspend fun search(query: String): List<SearchHit>
 
     /**
      * Encrypts [source] on the device with a fresh key, uploads only the
@@ -210,6 +243,8 @@ interface SettingsRepository {
     suspend fun setReadReceipts(enabled: Boolean)
 
     suspend fun setTypingIndicators(enabled: Boolean)
+
+    suspend fun setScreenSecurity(enabled: Boolean)
 }
 
 interface EncryptionRepository {

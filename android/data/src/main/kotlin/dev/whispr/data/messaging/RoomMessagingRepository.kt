@@ -3,6 +3,7 @@ package dev.whispr.data.messaging
 import dev.whispr.data.db.AttachmentEntity
 import dev.whispr.data.db.ContactEntity
 import dev.whispr.data.db.ConversationRow
+import dev.whispr.data.db.ConversationSettingEntity
 import dev.whispr.data.db.GroupRow
 import dev.whispr.data.db.MessageEntity
 import dev.whispr.data.db.OutboxEntity
@@ -22,14 +23,18 @@ import dev.whispr.domain.model.GroupSummary
 import dev.whispr.domain.model.MediaSource
 import dev.whispr.domain.model.Message
 import dev.whispr.domain.model.MessageNotice
+import dev.whispr.domain.model.MessageRules
 import dev.whispr.domain.model.MessageStatus
+import dev.whispr.domain.model.Quote
 import dev.whispr.domain.model.Reaction
+import dev.whispr.domain.model.SearchHit
 import dev.whispr.domain.model.SendResult
 import dev.whispr.domain.model.TrustState
 import dev.whispr.domain.model.UserId
 import dev.whispr.domain.repository.AccountRepository
 import dev.whispr.domain.repository.MessagingRepository
 import dev.whispr.domain.repository.SettingsRepository
+import java.time.Duration
 import java.time.Instant
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicLong
@@ -40,6 +45,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.transformLatest
 
 class RoomMessagingRepository(
@@ -88,67 +94,243 @@ class RoomMessagingRepository(
         val names = everyone.associate { it.userId to it.displayName }
         val byRow = attachments.associateBy { it.messageRow }
         val byTarget = reactions.groupBy { it.targetAuthor to it.targetMid }
+        val byAuthor = rows.associateBy { (if (it.outgoing) me.orEmpty() else it.peerId) to it.messageId }
         rows.map { m ->
             val author = if (m.outgoing) me.orEmpty() else m.peerId
+            val quote = m.quoteId?.let { qid ->
+                val target = byAuthor[m.quoteAuthor.orEmpty() to qid]?.takeIf { !it.deleted && it.placeholder == null }
+                Quote(
+                    messageId = qid,
+                    outgoing = m.quoteAuthor == me,
+                    authorName = names[m.quoteAuthor],
+                    text = target?.body.orEmpty(),
+                    attachmentKind = target?.let { byRow[it.localOrder] }?.let { AttachmentKind.valueOf(it.kind) },
+                    found = target != null,
+                )
+            }
             m.toDomain(
                 showRead = privacy.readReceipts,
                 attachment = byRow[m.localOrder],
                 reactions = byTarget[author to m.messageId].orEmpty(),
                 me = me,
                 authorName = if (isGroup && !m.outgoing && !m.system) names[m.peerId] else null,
+                quote = quote,
             )
         }
     }
 
-    override suspend fun sendText(peer: UserId, text: String): Boolean {
+    override suspend fun sendText(peer: UserId, text: String, replyTo: String?): Boolean =
+        sendDirectText(peer, text, replyTo, forwarded = false)
+
+    private suspend fun sendDirectText(peer: UserId, text: String, replyTo: String?, forwarded: Boolean): Boolean {
         // A changed key the user has not acknowledged blocks sending.
         if (db.contactDao().get(peer.value)?.trust == TrustState.KeyChanged.name) return false
         val conversation = conversationWith(peer)
         val id = UUID.randomUUID().toString()
         val now = clock()
+        val quote = replyTo?.let { quoteRef(conversation, it) }
+        val exp = timerOf(conversation)
         db.messagingTransactions().sendNew(
-            MessageEntity(
-                messageId = id,
-                conversationId = conversation.value,
-                peerId = peer.value,
-                outgoing = true,
-                body = text,
-                timestamp = now,
-                status = MessageStatus.Sending.name,
-            ),
+            outgoingRow(id, conversation, peer.value, text, now, quote, forwarded, exp),
             OutboxEntity(
                 messageId = id,
                 conversationId = conversation.value,
                 recipientId = peer.value,
-                payload = PayloadCodec.encode(Payload.Text(text, mid = id, ts = now)),
+                payload = PayloadCodec.encode(
+                    Payload.Text(
+                        text,
+                        mid = id,
+                        ts = now,
+                        q = quote?.first,
+                        qa = quote?.second,
+                        fwd = forwarded,
+                        exp = exp,
+                    ),
+                ),
                 clientTs = now,
             ),
         )
         return true
     }
 
-    override suspend fun sendGroupText(group: GroupId, text: String): Boolean {
+    override suspend fun sendGroupText(group: GroupId, text: String, replyTo: String?): Boolean =
+        sendGroupText(group, text, replyTo, forwarded = false)
+
+    private suspend fun sendGroupText(group: GroupId, text: String, replyTo: String?, forwarded: Boolean): Boolean {
         val id = UUID.randomUUID().toString()
         val now = clock()
+        val conversation = ConversationId(group.value)
+        val quote = replyTo?.let { quoteRef(conversation, it) }
+        val exp = timerOf(conversation)
         return engine.sendToGroup(
             group.value,
-            MessageEntity(
-                messageId = id,
-                conversationId = group.value,
-                peerId = group.value,
-                outgoing = true,
-                body = text,
-                timestamp = now,
-                status = MessageStatus.Sending.name,
+            outgoingRow(id, conversation, group.value, text, now, quote, forwarded, exp),
+            Payload.Text(
+                text,
+                mid = id,
+                ts = now,
+                g = group.value,
+                q = quote?.first,
+                qa = quote?.second,
+                fwd = forwarded,
+                exp = exp,
             ),
-            Payload.Text(text, mid = id, ts = now, g = group.value),
         )
     }
+
+    /** Outgoing disappearing messages start their clock when sent. */
+    private fun outgoingRow(
+        id: String,
+        conversation: ConversationId,
+        peerId: String,
+        text: String,
+        now: Long,
+        quote: Pair<String, String>?,
+        forwarded: Boolean,
+        exp: Long?,
+    ) = MessageEntity(
+        messageId = id,
+        conversationId = conversation.value,
+        peerId = peerId,
+        outgoing = true,
+        body = text,
+        timestamp = now,
+        status = MessageStatus.Sending.name,
+        quoteId = quote?.first,
+        quoteAuthor = quote?.second,
+        forwarded = forwarded,
+        expiresIn = exp,
+        expireAt = exp?.let { now + it * MS_PER_S },
+    )
+
+    /** The (logical ID, author) a reply quotes, if it is shown content in this conversation. */
+    private suspend fun quoteRef(conversation: ConversationId, messageId: String): Pair<String, String>? {
+        val me = accounts.getAccount()?.userId?.value ?: return null
+        val m = engineTx { db.groupDao().messageIn(conversation.value, messageId) } ?: return null
+        if (m.system || m.deleted || m.placeholder != null) return null
+        return m.messageId to (if (m.outgoing) me else m.peerId)
+    }
+
+    /** The conversation's timer in seconds, or null when off. */
+    private suspend fun timerOf(conversation: ConversationId): Long? =
+        engineTx { db.cryptoDao().conversationSetting(conversation.value)?.timer }?.takeIf { it > 0 }
 
     override suspend fun sendMedia(conversation: ConversationId, source: MediaSource): SendResult {
         val service = media ?: return SendResult.NotAllowed
         val target = target(conversation) ?: return SendResult.NotAllowed
-        return service.send(conversation, target, source)
+        return service.send(conversation, target, source, expiresIn = timerOf(conversation))
+    }
+
+    override suspend fun forward(from: ConversationId, messageId: String, to: ConversationId): SendResult {
+        val m = engineTx { db.groupDao().messageIn(from.value, messageId) } ?: return SendResult.NotAllowed
+        if (m.system || m.deleted || m.placeholder != null) return SendResult.NotAllowed
+        val target = target(to) ?: return SendResult.NotAllowed
+        if (db.groupQueries().attachment(m.localOrder) != null) {
+            val service = media ?: return SendResult.NotAllowed
+            return service.forward(m.localOrder, to, target, expiresIn = timerOf(to))
+        }
+        val ok = when (target) {
+            is MediaService.Target.Group -> sendGroupText(GroupId(target.id), m.body, null, forwarded = true)
+            is MediaService.Target.Direct -> sendDirectText(UserId(target.peer), m.body, null, forwarded = true)
+        }
+        return if (ok) SendResult.Ok else SendResult.NotAllowed
+    }
+
+    override suspend fun deleteForMe(conversation: ConversationId, messageId: String) {
+        val me = accounts.getAccount()?.userId?.value ?: return
+        val files = engineTx {
+            val m = db.groupDao().messageIn(conversation.value, messageId) ?: return@engineTx emptyList()
+            // Not sent yet: it must not go out after the user deleted it.
+            if (m.outgoing) db.groupDao().removeOutbox(m.messageId)
+            MessageDeletion.remove(db.cryptoDao(), m, if (m.outgoing) me else m.peerId)
+        }
+        MessageDeletion.deleteFiles(files)
+    }
+
+    override suspend fun deleteForEveryone(conversation: ConversationId, messageId: String): Boolean {
+        val me = accounts.getAccount()?.userId?.value ?: return false
+        val m = engineTx { db.groupDao().messageIn(conversation.value, messageId) } ?: return false
+        val now = clock()
+        val sent = m.status != MessageStatus.Sending.name && m.status != MessageStatus.Failed.name
+        val inWindow = now - m.timestamp <= MessageRules.DELETE_FOR_EVERYONE_WINDOW.toMillis()
+        if (!m.outgoing || m.system || m.deleted || !sent || !inWindow) return false
+        val group = db.groupQueries().observeGroup(conversation.value).first()
+        val payload = Payload.Delete(m.messageId, now, g = group?.groupId)
+        if (group != null) {
+            if (!engine.sendToGroup(group.groupId, null, payload)) return false
+        } else {
+            db.outboxDao().enqueue(
+                OutboxEntity(
+                    messageId = UUID.randomUUID().toString(),
+                    conversationId = conversation.value,
+                    recipientId = m.peerId,
+                    payload = PayloadCodec.encode(payload),
+                    clientTs = now,
+                ),
+            )
+        }
+        val files = engineTx { MessageDeletion.tombstone(db.cryptoDao(), m, me) }
+        MessageDeletion.deleteFiles(files)
+        return true
+    }
+
+    override fun observeTimer(conversation: ConversationId): Flow<Long> =
+        db.messageDao().observeSetting(conversation.value).map { it?.timer ?: 0L }.distinctUntilChanged()
+
+    override suspend fun setTimer(conversation: ConversationId, seconds: Long): Boolean {
+        if (seconds !in 0..MessageRules.MAX_TIMER_SECONDS) return false
+        val now = clock()
+        val group = db.groupQueries().observeGroup(conversation.value).first()
+        val noticePeer: String
+        if (group != null) {
+            if (group.status != GroupStatus.Active.name) return false
+            if (!engine.sendToGroup(group.groupId, null, Payload.Timer(seconds, now, g = group.groupId))) return false
+            noticePeer = group.groupId
+        } else {
+            val peer = (target(conversation) as? MediaService.Target.Direct)?.peer ?: return false
+            db.outboxDao().enqueue(
+                OutboxEntity(
+                    messageId = UUID.randomUUID().toString(),
+                    conversationId = conversation.value,
+                    recipientId = peer,
+                    payload = PayloadCodec.encode(Payload.Timer(seconds, now)),
+                    clientTs = now,
+                ),
+            )
+            noticePeer = peer
+        }
+        engineTx {
+            val dao = db.cryptoDao()
+            dao.putConversationSetting(ConversationSettingEntity(conversation.value, seconds, now))
+            dao.insertMessage(
+                MessageDeletion.notice(conversation.value, noticePeer, TimerText.changed(null, seconds), now),
+            )
+        }
+        return true
+    }
+
+    override suspend fun search(query: String): List<SearchHit> {
+        val q = query.trim()
+        if (q.isEmpty()) return emptyList()
+        val pattern = "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        return db.messageDao().search(pattern, SEARCH_LIMIT).map { r ->
+            val isGroup = r.groupName != null
+            val conversation = ConversationId(r.conversationId)
+            SearchHit(
+                conversation = conversation,
+                title = r.groupName ?: r.contactName.orEmpty(),
+                message = Message(
+                    id = r.messageId,
+                    conversationId = conversation,
+                    outgoing = r.outgoing,
+                    text = r.body,
+                    timestamp = Instant.ofEpochMilli(r.timestamp),
+                    status = r.status?.let { statusFor(it, showRead = false) },
+                ),
+                peer = if (isGroup) null else UserId(r.peerId),
+                group = if (isGroup) GroupId(r.conversationId) else null,
+            )
+        }
     }
 
     /** Where a conversation's messages go, or null if we can't send there now. */
@@ -221,7 +403,7 @@ class RoomMessagingRepository(
             val ok = engine.sendToGroup(
                 message.conversationId,
                 null,
-                Payload.Text(message.body, mid = messageId, ts = message.timestamp, g = message.conversationId),
+                message.textPayload(g = message.conversationId),
             )
             if (!ok) db.messageDao().setStatus(messageId, MessageStatus.Failed.name)
             return
@@ -232,13 +414,27 @@ class RoomMessagingRepository(
                 messageId = messageId,
                 conversationId = message.conversationId,
                 recipientId = message.peerId,
-                payload = PayloadCodec.encode(Payload.Text(message.body, mid = messageId, ts = message.timestamp)),
+                payload = PayloadCodec.encode(message.textPayload(g = null)),
                 clientTs = message.timestamp,
             ),
         )
     }
 
+    /** A retry sends exactly what was first queued: same ID, time, quote, forward flag and timer. */
+    private fun MessageEntity.textPayload(g: String?) = Payload.Text(
+        body,
+        mid = messageId,
+        ts = timestamp,
+        g = g,
+        q = quoteId,
+        qa = quoteAuthor,
+        fwd = forwarded,
+        exp = expiresIn,
+    )
+
     override suspend fun markRead(conversation: ConversationId) {
+        // Seeing a disappearing message starts its clock.
+        db.messageDao().startTimers(conversation.value, clock())
         val unread = db.messageDao().unreadIncomingIds(conversation.value)
         if (unread.isEmpty()) return
         db.messageDao().markAllReadByMe(conversation.value)
@@ -292,6 +488,7 @@ class RoomMessagingRepository(
         reactions: List<ReactionEntity> = emptyList(),
         me: String? = null,
         authorName: String? = null,
+        quote: Quote? = null,
     ) = Message(
         id = messageId,
         conversationId = ConversationId(conversationId),
@@ -307,6 +504,11 @@ class RoomMessagingRepository(
             Reaction(emoji, list.size, list.any { it.reactorId == me })
         }.sortedByDescending { it.count },
         system = system,
+        quote = quote,
+        forwarded = forwarded,
+        deleted = deleted,
+        expiresIn = expiresIn?.let(Duration::ofSeconds),
+        expiresAt = expireAt?.let(Instant::ofEpochMilli),
     )
 
     private fun ConversationRow.toSummary(conversationId: ConversationId, showRead: Boolean) = ConversationSummary(
@@ -361,6 +563,8 @@ class RoomMessagingRepository(
 
     private companion object {
         const val TYPING_THROTTLE_MS = 3_000L
+        const val MS_PER_S = 1_000L
+        const val SEARCH_LIMIT = 100
     }
 }
 

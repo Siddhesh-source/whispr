@@ -11,7 +11,8 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 
-data class ServerConfig(val baseUrl: String)
+/** [pins]: SPKI pins ("sha256/<base64>") for the server's certificate chain; empty disables pinning. */
+data class ServerConfig(val baseUrl: String, val pins: List<String> = emptyList())
 
 sealed interface ApiResult<out T> {
     data class Success<T>(val body: T) : ApiResult<T>
@@ -41,6 +42,18 @@ class AuthApi(private val client: OkHttpClient, config: ServerConfig, private va
     suspend fun me(token: String): ApiResult<MeResponse> = execute(
         Request.Builder().url(base.resolve("v1/me")!!).header("Authorization", "Bearer $token").get().build(),
     )
+
+    /** Deletes the account server-side; [signature] answers a fresh challenge over [AuthMessages.delete]. */
+    suspend fun deleteAccount(token: String, challengeId: String, signature: ByteArray): ApiResult<Unit> =
+        client.executeUnit(
+            Request.Builder()
+                .url(base.resolve("v1/me")!!)
+                .header("Authorization", "Bearer $token")
+                .delete(
+                    json.encodeToString(DeleteAccountRequest(challengeId, b64(signature))).toRequestBody(JSON_MEDIA),
+                )
+                .build(),
+        )
 
     private suspend inline fun <reified Req, reified Res> post(path: String, body: Req): ApiResult<Res> = execute(
         Request.Builder()
@@ -88,3 +101,6 @@ data class VerifyResponse(val token: String, @SerialName("expires_at") val expir
 
 @Serializable
 data class MeResponse(@SerialName("user_id") val userId: String, @SerialName("display_name") val displayName: String)
+
+@Serializable
+data class DeleteAccountRequest(@SerialName("challenge_id") val challengeId: String, val signature: String)

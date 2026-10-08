@@ -56,6 +56,7 @@ class SessionAuthRepositoryTest {
         override fun instant() = now
     }
     private lateinit var repo: SessionAuthRepository
+    private var wiped = 0
 
     @Before
     fun setUp() {
@@ -64,7 +65,7 @@ class SessionAuthRepositoryTest {
         val identity =
             LibsignalIdentityRepository(SecretFileStore(tmp.root, SoftwareKeyWrapper()), Dispatchers.Unconfined)
         val api = AuthApi(OkHttpClient(), ServerConfig(server.url("/").toString()))
-        repo = SessionAuthRepository(api, identity, accounts, clock)
+        repo = SessionAuthRepository(api, identity, accounts, clock) { wiped++ }
     }
 
     @After
@@ -134,6 +135,25 @@ class SessionAuthRepositoryTest {
     }
 
     @Test
+    fun deleteAccountSignsDeleteMessageThenWipes() = runTest {
+        registerAndStore()
+        assertEquals(AuthResult.Ok(Unit), repo.deleteAccount())
+        assertTrue(fake.deleted)
+        assertEquals(1, wiped)
+        assertEquals(SessionState.Unavailable(AuthError.Rejected), repo.session.value)
+    }
+
+    @Test
+    fun failedServerDeleteLeavesDeviceUntouched() = runTest {
+        registerAndStore()
+        repo.authenticate()
+        fake.rejectDelete = true
+        assertEquals(AuthResult.Err(AuthError.Rejected), repo.deleteAccount())
+        assertEquals(0, wiped)
+        assertNotNull(repo.bearerToken())
+    }
+
+    @Test
     fun serverErrorsMapToServer() = runTest {
         fake.failAll = 500
         assertEquals(AuthResult.Err(AuthError.Server), repo.register("Ada"))
@@ -160,6 +180,8 @@ private class FakeAuthServer(private val now: () -> Instant) : Dispatcher() {
     var identityKey: IdentityKey? = null
     var challenges = 0
     var rejectVerify = false
+    var rejectDelete = false
+    var deleted = false
     var failAll: Int? = null
     val issuedToken = "tok-" + UUID.randomUUID()
     private val nonces = mutableMapOf<String, ByteArray>()
@@ -183,6 +205,7 @@ private class FakeAuthServer(private val now: () -> Instant) : Dispatcher() {
                 )
             }
             "/v1/auth/verify" -> verify(body)
+            "/v1/me" -> delete(request, body)
             else -> json(404, "{}")
         }
     }
@@ -209,6 +232,21 @@ private class FakeAuthServer(private val now: () -> Instant) : Dispatcher() {
         // Go emits nanosecond precision; make sure the client parses it.
         val expiry = now().plusSeconds(15 * 60).plusNanos(123_456_789)
         return json(200, """{"token":"$issuedToken","expires_at":"$expiry"}""")
+    }
+
+    /** Accepts only a fresh challenge signed over the delete message, never a sign-in signature. */
+    private fun delete(request: RecordedRequest, body: JsonObject): MockResponse {
+        if (request.method != "DELETE" || request.headers["Authorization"] != "Bearer $issuedToken") {
+            return json(401, "{}")
+        }
+        val nonce = nonces.remove(body.str("challenge_id")) ?: return json(401, "{}")
+        val ok = identityKey!!.publicKey.verifySignature(
+            AuthMessages.delete(userId, nonce),
+            b64.decode(body.str("signature")),
+        )
+        if (!ok || rejectDelete) return json(401, "{}")
+        deleted = true
+        return MockResponse.Builder().code(204).build()
     }
 
     private fun JsonObject.str(k: String) = getValue(k).jsonPrimitive.content

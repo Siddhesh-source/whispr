@@ -229,8 +229,8 @@ class FakeGateway : Dispatcher() {
     }
 
     /** Ends the current connection; the client must reconnect. */
-    fun drop() {
-        current?.close(1001, "going away")
+    fun drop(code: Int = 1001, reason: String = "going away") {
+        current?.close(code, reason)
     }
 
     /** The plaintext of a send, as its recipient (a libsignal peer) decrypts it. Resends decrypt once. */

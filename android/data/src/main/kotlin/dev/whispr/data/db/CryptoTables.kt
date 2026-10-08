@@ -208,10 +208,52 @@ interface CryptoDao {
     @Query("SELECT * FROM messages WHERE localOrder = :row")
     fun messageByRow(row: Long): MessageEntity?
 
+    /** A resend arrived: the placeholder becomes the message, in place. A deleted one stays deleted. */
     @Query(
-        "UPDATE messages SET body = :body, timestamp = :timestamp, placeholder = NULL WHERE localOrder = :localOrder",
+        """UPDATE messages SET body = :body, timestamp = :timestamp, placeholder = NULL, quoteId = :quoteId,
+           quoteAuthor = :quoteAuthor, forwarded = :forwarded, expiresIn = :expiresIn
+           WHERE localOrder = :localOrder AND deleted = 0""",
     )
-    fun recoverPlaceholder(localOrder: Long, body: String, timestamp: Long)
+    fun recoverPlaceholder(
+        localOrder: Long,
+        body: String,
+        timestamp: Long,
+        quoteId: String?,
+        quoteAuthor: String?,
+        forwarded: Boolean,
+        expiresIn: Long?,
+    )
+
+    /** Deleted for everyone: the row stays as a tombstone, with nothing of the content. */
+    @Query(
+        """UPDATE messages SET body = '', placeholder = NULL, deleted = 1, quoteId = NULL, quoteAuthor = NULL,
+           forwarded = 0 WHERE localOrder = :localOrder""",
+    )
+    fun markDeleted(localOrder: Long)
+
+    @Query("DELETE FROM messages WHERE localOrder = :localOrder")
+    fun deleteRow(localOrder: Long)
+
+    @Query("SELECT * FROM attachments WHERE messageRow = :messageRow")
+    fun attachmentOf(messageRow: Long): AttachmentEntity?
+
+    @Query("DELETE FROM attachments WHERE messageRow = :messageRow")
+    fun deleteAttachment(messageRow: Long)
+
+    @Query(
+        "DELETE FROM reactions WHERE conversationId = :conversationId AND targetAuthor = :author AND targetMid = :mid",
+    )
+    fun deleteReactionsOn(conversationId: String, author: String, mid: String)
+
+    @Query("SELECT * FROM conversation_settings WHERE conversationId = :conversationId")
+    fun conversationSetting(conversationId: String): ConversationSettingEntity?
+
+    @Upsert
+    fun putConversationSetting(row: ConversationSettingEntity)
+
+    /** Disappearing messages whose time is up. */
+    @Query("SELECT * FROM messages WHERE expireAt IS NOT NULL AND expireAt <= :now")
+    fun expired(now: Long): List<MessageEntity>
 
     @Query(
         "UPDATE messages SET placeholder = :state WHERE peerId = :peerId AND messageId = :messageId AND placeholder IN (:from)",

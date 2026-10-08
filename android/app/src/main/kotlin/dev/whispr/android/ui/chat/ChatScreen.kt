@@ -1,6 +1,9 @@
 package dev.whispr.android.ui.chat
 
 import android.Manifest
+import android.content.ClipData
+import android.content.ClipDescription
+import android.content.ClipboardManager
 import android.content.pm.PackageManager
 import android.graphics.BitmapFactory
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -28,9 +31,12 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -54,6 +60,7 @@ import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.window.Dialog
 import androidx.core.content.ContextCompat
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
@@ -69,6 +76,7 @@ import dev.whispr.core.designsystem.component.LoadingState
 import dev.whispr.core.designsystem.component.MessageBubble
 import dev.whispr.core.designsystem.component.MessageInputBar
 import dev.whispr.core.designsystem.component.OfflineBanner
+import dev.whispr.core.designsystem.component.QuotePreview
 import dev.whispr.core.designsystem.component.ReactionChip
 import dev.whispr.core.designsystem.component.SystemNotice
 import dev.whispr.core.designsystem.component.WarningCard
@@ -79,10 +87,14 @@ import dev.whispr.core.designsystem.theme.WhisprTheme
 import dev.whispr.domain.model.Attachment
 import dev.whispr.domain.model.AttachmentKind
 import dev.whispr.domain.model.AttachmentState
+import dev.whispr.domain.model.ConversationId
+import dev.whispr.domain.model.ConversationSummary
 import dev.whispr.domain.model.GroupStatus
 import dev.whispr.domain.model.Message
 import dev.whispr.domain.model.MessageNotice
+import dev.whispr.domain.model.MessageRules
 import dev.whispr.domain.model.MessageStatus
+import dev.whispr.domain.model.Quote
 import dev.whispr.domain.model.TrustState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -111,6 +123,7 @@ fun ChatRoute(
     viewModel: ChatViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val forwardTargets by viewModel.forwardTargets.collectAsStateWithLifecycle()
     val count = (state.content as? ChatContent.Messages)?.items?.size ?: 0
     // Only while actually on screen: mark read (sends a receipt if enabled)
     // and suppress notifications for this conversation.
@@ -142,8 +155,30 @@ fun ChatRoute(
         onAcceptInvite = viewModel::acceptInvite,
         onDeclineInvite = { viewModel.declineInvite(onBack) },
         attachments = actions,
+        messageActions = MessageActions(
+            onReply = viewModel::replyTo,
+            onForward = viewModel::forward,
+            onDeleteForMe = viewModel::deleteForMe,
+            onDeleteForEveryone = viewModel::deleteForEveryone,
+            canDeleteForEveryone = viewModel::canDeleteForEveryone,
+            onSetTimer = viewModel::setTimer,
+            forwardTargets = forwardTargets,
+        ),
     )
 }
+
+/** Long-press actions on a message, and the conversation timer. */
+data class MessageActions(
+    val onReply: (Message?) -> Unit = {},
+    val onForward: (messageId: String, to: ConversationId) -> Unit = { _, _ -> },
+    val onDeleteForMe: (String) -> Unit = {},
+    val onDeleteForEveryone: (String) -> Unit = {},
+    val canDeleteForEveryone: (Message) -> Boolean = { false },
+    val onSetTimer: (Long) -> Unit = {},
+    val forwardTargets: List<ConversationSummary> = emptyList(),
+)
+
+private enum class DeleteKind { ForMe, ForEveryone }
 
 @Composable
 fun ChatScreen(
@@ -163,8 +198,12 @@ fun ChatScreen(
     onAcceptInvite: () -> Unit = {},
     onDeclineInvite: () -> Unit = {},
     attachments: AttachmentActions = AttachmentActions.None,
+    messageActions: MessageActions = MessageActions(),
 ) {
     var reactingTo by remember { mutableStateOf<Message?>(null) }
+    var actingOn by remember { mutableStateOf<Message?>(null) }
+    var forwarding by remember { mutableStateOf<Message?>(null) }
+    var deleting by remember { mutableStateOf<Pair<Message, DeleteKind>?>(null) }
     Scaffold(
         containerColor = MaterialTheme.colorScheme.surface,
         topBar = {
@@ -184,6 +223,7 @@ fun ChatScreen(
                 titleBadgeDescription = stringResource(R.string.chat_verified_badge),
                 actions = {
                     if (state.content !is ChatContent.Missing) {
+                        if (state.canCompose) TimerMenu(state.timerSeconds, messageActions.onSetTimer)
                         if (state.isGroup) {
                             IconButton(onClick = onGroupInfo) {
                                 Icon(WhisprIcons.Group, contentDescription = stringResource(R.string.chat_group_info))
@@ -222,7 +262,7 @@ fun ChatScreen(
                             state.peerName,
                             state.isGroup,
                             onRetry,
-                            onLongPress = { if (state.canCompose) reactingTo = it },
+                            onLongPress = { actingOn = it },
                             onReact = onReact,
                             attachments = attachments,
                         )
@@ -260,10 +300,64 @@ fun ChatScreen(
                             },
                         ),
                     )
-                    else -> Composer(state, onInput, onSend, onSendMedia)
+                    else -> Column {
+                        state.replyingTo?.let { ReplyBar(it, state.peerName) { messageActions.onReply(null) } }
+                        Composer(state, onInput, onSend, onSendMedia)
+                    }
                 }
             }
         }
+    }
+    actingOn?.let { m ->
+        ActionSheet(
+            message = m,
+            canWrite = state.canCompose,
+            canDeleteForEveryone = messageActions.canDeleteForEveryone(m),
+            onDismiss = { actingOn = null },
+            onReact = { reactingTo = m },
+            onReply = { messageActions.onReply(m) },
+            onForward = { forwarding = m },
+            onDelete = { kind -> deleting = m to kind },
+        )
+    }
+    forwarding?.let { m ->
+        ForwardPicker(
+            targets = messageActions.forwardTargets,
+            onPick = { to ->
+                messageActions.onForward(m.id, to)
+                forwarding = null
+            },
+            onDismiss = { forwarding = null },
+        )
+    }
+    deleting?.let { (m, kind) ->
+        AlertDialog(
+            onDismissRequest = { deleting = null },
+            confirmButton = {
+                TextButton(onClick = {
+                    if (kind == DeleteKind.ForMe) {
+                        messageActions.onDeleteForMe(m.id)
+                    } else {
+                        messageActions.onDeleteForEveryone(m.id)
+                    }
+                    deleting = null
+                }) { Text(stringResource(R.string.chat_delete_confirm)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleting = null }) { Text(stringResource(R.string.chat_cancel)) }
+            },
+            text = {
+                Text(
+                    stringResource(
+                        if (kind == DeleteKind.ForMe) {
+                            R.string.chat_delete_me_message
+                        } else {
+                            R.string.chat_delete_everyone_message
+                        },
+                    ),
+                )
+            },
+        )
     }
     reactingTo?.let { m ->
         ReactionPicker(
@@ -286,6 +380,7 @@ fun ChatScreen(
                             ChatError.TooLarge -> R.string.chat_error_too_large
                             ChatError.Unreadable -> R.string.chat_error_unreadable
                             ChatError.NotAllowed -> R.string.chat_error_not_allowed
+                            ChatError.DeleteFailed -> R.string.chat_error_delete_failed
                         },
                     ),
                 )
@@ -403,9 +498,13 @@ private fun MessageList(
                 SystemNotice(m.text)
                 return@items
             }
-            val attachment = m.attachment
+            val attachment = m.attachment.takeIf { !m.deleted }
             MessageBubble(
-                text = m.notice?.let { stringResource(it.labelRes()) } ?: m.text,
+                text = when {
+                    m.deleted -> stringResource(R.string.chat_deleted)
+                    m.notice != null -> stringResource(m.notice!!.labelRes())
+                    else -> m.text
+                },
                 time = formatTime(m.timestamp),
                 direction = if (m.outgoing) BubbleDirection.Outgoing else BubbleDirection.Incoming,
                 senderName = if (m.outgoing) null else m.authorName ?: peerName,
@@ -413,10 +512,13 @@ private fun MessageList(
                 groupPosition = item.position,
                 status = m.status?.toDeliveryStatus(),
                 onRetry = { onRetry(m.id) },
-                notice = m.notice != null,
+                notice = m.notice != null || m.deleted,
                 attachment = attachment?.let { a -> { AttachmentView(m.id, a, attachments) } },
                 reactions = m.reactions.map { ReactionChip(it.emoji, it.count, it.mine) },
-                onReact = if (m.notice == null) ({ onLongPress(m) }) else null,
+                onActions = if (m.notice == null) ({ onLongPress(m) }) else null,
+                quote = m.quote?.takeIf { !m.deleted }?.let { quotePreview(it, peerName) },
+                forwarded = m.forwarded && !m.deleted,
+                expiring = m.expiresIn != null && !m.deleted,
                 onReactionClick = { emoji ->
                     val mine = m.reactions.firstOrNull { it.mine }?.emoji
                     onReact(m.id, if (mine == emoji) null else emoji)
@@ -569,6 +671,179 @@ private fun AttachmentStateOverlay(state: AttachmentState, onDownload: () -> Uni
         )
         AttachmentState.Ready -> Unit
     }
+}
+
+@Composable
+private fun quotePreview(q: Quote, peerName: String): QuotePreview {
+    val author = if (q.outgoing) stringResource(R.string.chat_you) else q.authorName ?: peerName
+    val text = when {
+        !q.found -> stringResource(R.string.chat_quote_missing)
+        q.text.isNotEmpty() -> q.text
+        else -> when (q.attachmentKind) {
+            AttachmentKind.Image -> stringResource(R.string.chats_preview_photo)
+            AttachmentKind.Voice -> stringResource(R.string.chats_preview_voice)
+            AttachmentKind.File, null -> stringResource(R.string.chats_preview_file)
+        }
+    }
+    return QuotePreview(author, text)
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ActionSheet(
+    message: Message,
+    canWrite: Boolean,
+    canDeleteForEveryone: Boolean,
+    onDismiss: () -> Unit,
+    onReact: () -> Unit,
+    onReply: () -> Unit,
+    onForward: () -> Unit,
+    onDelete: (DeleteKind) -> Unit,
+) {
+    val context = LocalContext.current
+    val content = MessageRules.isContent(message)
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        @Composable
+        fun action(label: Int, icon: androidx.compose.ui.graphics.vector.ImageVector, run: () -> Unit) {
+            ListItem(
+                headlineContent = { Text(stringResource(label)) },
+                leadingContent = { Icon(icon, contentDescription = null) },
+                modifier = Modifier.clickable {
+                    onDismiss()
+                    run()
+                },
+            )
+        }
+        Column(Modifier.navigationBarsPadding()) {
+            if (canWrite && content) {
+                action(R.string.chat_action_react, WhisprIcons.React, onReact)
+                action(R.string.chat_action_reply, WhisprIcons.Reply, onReply)
+            }
+            if (content && message.text.isNotEmpty()) {
+                action(R.string.chat_action_copy, WhisprIcons.Copy) { copySensitive(context, message.text) }
+            }
+            if (content) action(R.string.chat_action_forward, WhisprIcons.Forward, onForward)
+            action(R.string.chat_action_delete_me, WhisprIcons.Delete) { onDelete(DeleteKind.ForMe) }
+            if (canDeleteForEveryone) {
+                action(R.string.chat_action_delete_everyone, WhisprIcons.Delete) { onDelete(DeleteKind.ForEveryone) }
+            }
+        }
+    }
+}
+
+/** Copies [text], flagged sensitive so the keyboard's clipboard preview and history hide it. */
+private fun copySensitive(context: android.content.Context, text: String) {
+    val clip = ClipData.newPlainText("", text)
+    clip.description.extras = android.os.PersistableBundle().apply {
+        putBoolean(
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                ClipDescription.EXTRA_IS_SENSITIVE
+            } else {
+                "android.content.extra.IS_SENSITIVE"
+            },
+            true,
+        )
+    }
+    context.getSystemService(ClipboardManager::class.java)?.setPrimaryClip(clip)
+}
+
+@Composable
+private fun ForwardPicker(
+    targets: List<ConversationSummary>,
+    onPick: (ConversationId) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.chat_cancel)) } },
+        title = { Text(stringResource(R.string.chat_forward_title)) },
+        text = {
+            if (targets.isEmpty()) {
+                Text(stringResource(R.string.chat_forward_empty))
+            } else {
+                LazyColumn {
+                    items(targets, key = { it.id.value }) { c ->
+                        ListItem(
+                            headlineContent = { Text(c.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            modifier = Modifier.clickable { onPick(c.id) },
+                        )
+                    }
+                }
+            }
+        },
+    )
+}
+
+@Composable
+private fun ReplyBar(message: Message, peerName: String, onCancel: () -> Unit) {
+    val author = if (message.outgoing) stringResource(R.string.chat_you) else message.authorName ?: peerName
+    Surface(color = MaterialTheme.colorScheme.surfaceContainer, modifier = Modifier.fillMaxWidth()) {
+        Row(
+            Modifier.padding(start = WhisprTheme.spacing.lg),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(WhisprIcons.Reply, contentDescription = null)
+            Column(Modifier.weight(1f).padding(horizontal = WhisprTheme.spacing.sm)) {
+                Text(
+                    stringResource(R.string.chat_reply_to, author),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                Text(
+                    message.text.ifEmpty { stringResource(R.string.chats_preview_file) },
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            IconButton(onClick = onCancel) {
+                Icon(WhisprIcons.Close, contentDescription = stringResource(R.string.chat_reply_cancel))
+            }
+        }
+    }
+}
+
+@Composable
+private fun TimerMenu(seconds: Long, onSet: (Long) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { open = true }) {
+            Icon(
+                WhisprIcons.Timer,
+                contentDescription = stringResource(R.string.chat_timer),
+                tint = if (seconds > 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+            )
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            MessageRules.TIMER_OPTIONS.forEach { option ->
+                DropdownMenuItem(
+                    text = { Text(timerLabel(option)) },
+                    trailingIcon = if (option ==
+                        seconds
+                    ) {
+                        ({ Icon(WhisprIcons.Sent, contentDescription = null) })
+                    } else {
+                        null
+                    },
+                    onClick = {
+                        open = false
+                        if (option != seconds) onSet(option)
+                    },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun timerLabel(seconds: Long): String = when (seconds) {
+    0L -> stringResource(R.string.chat_timer_off)
+    MessageRules.TIMER_OPTIONS[1] -> stringResource(R.string.chat_timer_5m)
+    MessageRules.TIMER_OPTIONS[2] -> stringResource(R.string.chat_timer_1h)
+    MessageRules.TIMER_OPTIONS[3] -> stringResource(R.string.chat_timer_1d)
+    MessageRules.TIMER_OPTIONS[4] -> stringResource(R.string.chat_timer_1w)
+    else -> stringResource(R.string.chat_timer_custom, seconds.toInt())
 }
 
 @Composable
