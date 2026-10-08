@@ -35,6 +35,12 @@ data class Attachment(
     val thumbnail: ByteArray? = null,
     val state: AttachmentState,
 ) {
+    /**
+     * A GIF or animated WebP: sent as an image (so older apps still show its
+     * first frame) and animated by apps that know the type.
+     */
+    val animated: Boolean get() = kind == AttachmentKind.Image && contentType in ANIMATED_TYPES
+
     override fun equals(other: Any?) = other is Attachment &&
         kind == other.kind &&
         contentType == other.contentType &&
@@ -48,6 +54,8 @@ data class Attachment(
 
     override fun hashCode() = state.hashCode() * 31 + size.hashCode()
 }
+
+private val ANIMATED_TYPES = setOf("image/gif", "image/webp")
 
 /** A file the user picked or recorded, as an opaque platform URI string. */
 data class MediaSource(

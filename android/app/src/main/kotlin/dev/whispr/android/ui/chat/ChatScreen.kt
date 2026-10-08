@@ -1,11 +1,13 @@
 package dev.whispr.android.ui.chat
 
 import android.Manifest
+import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.content.pm.PackageManager
 import android.graphics.BitmapFactory
+import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -55,6 +57,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -109,6 +112,7 @@ import dev.whispr.domain.model.MessageRules
 import dev.whispr.domain.model.MessageStatus
 import dev.whispr.domain.model.Quote
 import dev.whispr.domain.model.TrustState
+import java.io.File
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -403,6 +407,8 @@ fun ChatScreen(
                             ChatError.DeleteFailed -> R.string.chat_error_delete_failed
                             ChatError.MicDenied -> R.string.chat_error_mic_denied
                             ChatError.MicUnavailable -> R.string.chat_error_mic_unavailable
+                            ChatError.CameraDenied -> R.string.chat_error_camera_denied
+                            ChatError.NoCamera -> R.string.chat_error_no_camera
                         },
                     ),
                 )
@@ -430,6 +436,34 @@ private fun Composer(
     }
     val pickFile = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let { onSendMedia(it.toString(), AttachmentKind.File, null, null) }
+    }
+    val pickGif = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        uri?.let { onSendMedia(it.toString(), AttachmentKind.Image, null, null) }
+    }
+    // Survives the activity being recreated while the camera app is in front.
+    var capture by rememberSaveable { mutableStateOf<String?>(null) }
+    val takePicture = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { taken ->
+        val file = capture?.let(::File)
+        capture = null
+        when {
+            file == null -> Unit
+            taken && file.length() > 0 -> onSendMedia(Uri.fromFile(file).toString(), AttachmentKind.Image, null, null)
+            else -> file.delete()
+        }
+    }
+    val openCamera = {
+        val file = newCameraFile(context)
+        capture = file.absolutePath
+        try {
+            takePicture.launch(cameraUri(context, file))
+        } catch (_: ActivityNotFoundException) {
+            capture = null
+            file.delete()
+            onError(ChatError.NoCamera)
+        }
+    }
+    val askCamera = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) openCamera() else onError(ChatError.CameraDenied)
     }
     val haptics = LocalHapticFeedback.current
     var elapsed by remember { mutableLongStateOf(0L) }
@@ -467,11 +501,33 @@ private fun Composer(
             }
             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                 DropdownMenuItem(
+                    text = { Text(stringResource(R.string.chat_attach_camera)) },
+                    leadingIcon = { Icon(WhisprIcons.Camera, contentDescription = null) },
+                    onClick = {
+                        menu = false
+                        // The app declares CAMERA (QR scanning, video calls), so Android
+                        // requires it to be granted before the camera intent may launch.
+                        val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) ==
+                            PackageManager.PERMISSION_GRANTED
+                        if (granted) openCamera() else askCamera.launch(Manifest.permission.CAMERA)
+                    },
+                )
+                DropdownMenuItem(
                     text = { Text(stringResource(R.string.chat_attach_photo)) },
                     leadingIcon = { Icon(WhisprIcons.Image, contentDescription = null) },
                     onClick = {
                         menu = false
                         pickImage.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                    },
+                )
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.chat_attach_gif)) },
+                    leadingIcon = { Icon(WhisprIcons.Gif, contentDescription = null) },
+                    onClick = {
+                        menu = false
+                        pickGif.launch(
+                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.SingleMimeType(GIF)),
+                        )
                     },
                 )
                 DropdownMenuItem(
@@ -510,6 +566,8 @@ private fun Composer(
                 onValueChange = onInput,
                 onSend = onSend,
                 leading = attach,
+                // Keyboard GIFs and stickers; the preparer keeps GIF frames, re-encodes the rest.
+                onReceiveImage = { uri -> onSendMedia(uri, AttachmentKind.Image, null, null) },
                 trailingWhenEmpty = {
                     IconButton(onClick = {
                         val granted =
@@ -530,6 +588,7 @@ private fun Composer(
 }
 
 private const val MAX_LEVELS = 64
+private const val GIF = "image/gif"
 private const val LEVEL_TICK_MS = 80L
 
 /**
@@ -701,23 +760,34 @@ private fun AttachmentView(messageId: String, a: Attachment, actions: Attachment
 
 @Composable
 private fun ImageAttachment(messageId: String, a: Attachment, actions: AttachmentActions) {
-    val full by produceState<ImageBitmap?>(null, messageId, a.state) {
-        value = if (a.state == AttachmentState.Ready) actions.bytes(messageId)?.let { decode(it) } else null
+    val bytes by produceState<ByteArray?>(null, messageId, a.state) {
+        value = if (a.state == AttachmentState.Ready) actions.bytes(messageId) else null
     }
+    val full by produceState<ImageBitmap?>(null, bytes) { value = bytes?.let { decode(it) } }
     val thumb by produceState<ImageBitmap?>(null, a.thumbnail) { value = a.thumbnail?.let { decode(it) } }
     val preview = full ?: thumb
     var zoomed by remember { mutableStateOf(false) }
-    val description = stringResource(R.string.chat_attachment_photo)
+    val description = stringResource(if (a.animated) R.string.chat_attachment_gif else R.string.chat_attachment_photo)
+    val still: @Composable () -> Unit = {
+        Box {
+            preview?.let { Image(it, contentDescription = null, contentScale = ContentScale.Fit) }
+            if (a.animated) GifLabel(Modifier.align(Alignment.BottomStart))
+        }
+    }
     Box(
         Modifier
             .widthIn(max = WhisprTheme.sizes.mediaPreviewMax)
             .heightIn(max = WhisprTheme.sizes.mediaPreviewMax)
             .semantics { contentDescription = description }
-            .clickable(enabled = full != null) { zoomed = true },
+            // A GIF already plays inline; only photos open full screen.
+            .clickable(enabled = full != null && !a.animated) { zoomed = true },
         contentAlignment = Alignment.Center,
     ) {
-        if (preview != null) {
-            Image(preview, contentDescription = null, contentScale = ContentScale.Fit)
+        val playable = bytes
+        if (a.animated && playable != null) {
+            AnimatedImage(playable, fallback = still)
+        } else if (preview != null) {
+            still()
         } else {
             Icon(WhisprIcons.Image, contentDescription = null, modifier = Modifier.size(WhisprTheme.sizes.avatarLarge))
         }

@@ -2,4 +2,6 @@
 <!-- Only decrypted copies the user asked to open; nothing else is shareable. -->
 <paths>
     <cache-path name="open" path="open/" />
+    <!-- Where the system camera writes a photo for us; deleted once it is encrypted. -->
+    <cache-path name="camera" path="camera/" />
 </paths>

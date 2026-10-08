@@ -145,6 +145,23 @@ class VoicePlayer {
     }
 }
 
+/**
+ * A fresh, app-private file for the system camera to write one photo into.
+ * Leftovers from an interrupted capture (older than an hour) are removed.
+ */
+fun newCameraFile(context: Context): File {
+    val dir = File(context.cacheDir, "camera").apply { mkdirs() }
+    val cutoff = System.currentTimeMillis() - STALE_CAPTURE_MS
+    dir.listFiles()?.filter { it.lastModified() < cutoff }?.forEach { it.delete() }
+    return File(dir, UUID.randomUUID().toString() + ".jpg")
+}
+
+/** A content URI the camera app may write [file] through (granted for that file only). */
+fun cameraUri(context: Context, file: File): Uri =
+    FileProvider.getUriForFile(context, context.packageName + ".files", file)
+
+private const val STALE_CAPTURE_MS = 60 * 60_000L
+
 /** Hands a decrypted export (in cache/open, cleared on next start) to another app, read-only. */
 fun openExternally(context: Context, path: String, contentType: String): Boolean {
     val uri = FileProvider.getUriForFile(context, context.packageName + ".files", File(path))

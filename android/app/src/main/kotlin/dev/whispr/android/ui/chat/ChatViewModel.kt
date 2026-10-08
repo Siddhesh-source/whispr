@@ -48,7 +48,16 @@ sealed interface ChatContent {
 }
 
 /** Why a send, forward or delete was refused, shown once as a message. */
-enum class ChatError { TooLarge, Unreadable, NotAllowed, DeleteFailed, MicDenied, MicUnavailable }
+enum class ChatError {
+    TooLarge,
+    Unreadable,
+    NotAllowed,
+    DeleteFailed,
+    MicDenied,
+    MicUnavailable,
+    CameraDenied,
+    NoCamera,
+}
 
 data class ChatUiState(
     val peerName: String = "",
@@ -212,8 +221,9 @@ class ChatViewModel @Inject constructor(
                 SendResult.Unreadable -> ChatError.Unreadable
                 SendResult.NotAllowed -> ChatError.NotAllowed
             }
-            // A voice recording is our own plaintext temp file: gone once encrypted (or refused).
-            if (kind == AttachmentKind.Voice && uri.startsWith("file:")) {
+            // file: URIs are only ever our own plaintext temp files (a voice
+            // recording or a camera photo): gone once encrypted, or refused.
+            if (uri.startsWith("file:")) {
                 runCatching { java.io.File(java.net.URI(uri)).delete() }
             }
         }

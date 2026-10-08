@@ -1,6 +1,7 @@
 package dev.whispr.data.media
 
 import android.content.ContentResolver
+import android.graphics.BitmapFactory
 import android.net.Uri
 import android.provider.OpenableColumns
 import dev.whispr.domain.model.AttachmentKind
@@ -40,7 +41,7 @@ class AndroidMediaPreparer(private val resolver: ContentResolver) : MediaPrepare
         when (source.kind) {
             AttachmentKind.Image -> image(uri)
             AttachmentKind.File, AttachmentKind.Voice -> {
-                val bytes = readCapped(uri) ?: return Prepared.TooLarge
+                val bytes = readCapped(uri, SendResult.MAX_ATTACHMENT_BYTES) ?: return Prepared.TooLarge
                 Prepared.Ok(
                     PreparedMedia(
                         bytes = bytes,
@@ -68,6 +69,7 @@ class AndroidMediaPreparer(private val resolver: ContentResolver) : MediaPrepare
     }
 
     private fun image(uri: Uri): Prepared {
+        if (AnimatedImages.isAnimated(head(uri))) return animated(uri)
         val bitmap = ImageCodec.decodeScaled(resolver, uri, IMAGE_SIDE)
         val bytes = ImageCodec.jpeg(bitmap, IMAGE_QUALITY)
         if (bytes.size > SendResult.MAX_ATTACHMENT_BYTES) return Prepared.TooLarge
@@ -83,8 +85,43 @@ class AndroidMediaPreparer(private val resolver: ContentResolver) : MediaPrepare
         )
     }
 
-    /** Reads at most the size limit; returns null if the file is larger. */
-    private fun readCapped(uri: Uri): ByteArray? {
+    /**
+     * A GIF or animated WebP keeps its frames: sent byte for byte after its
+     * metadata blocks are stripped ([AnimatedImages]). Malformed files are refused.
+     */
+    private fun animated(uri: Uri): Prepared {
+        val bytes = readCapped(uri, AnimatedImages.MAX_BYTES.toLong()) ?: return Prepared.TooLarge
+        val clean = AnimatedImages.clean(bytes) ?: return Prepared.Unreadable
+        val first = BitmapFactory.decodeByteArray(clean.bytes, 0, clean.bytes.size) ?: return Prepared.Unreadable
+        return Prepared.Ok(
+            PreparedMedia(
+                bytes = clean.bytes,
+                contentType = clean.contentType,
+                fileName = null,
+                width = clean.width,
+                height = clean.height,
+                thumbnail = ImageCodec.jpegUnder(first, THUMB_SIDE, THUMB_BYTES),
+            ),
+        )
+    }
+
+    /** The first bytes of a file, enough to recognise its format. */
+    private fun head(uri: Uri): ByteArray {
+        val input = resolver.openInputStream(uri) ?: throw IOException("cannot open")
+        return input.use {
+            val buf = ByteArray(HEAD_BYTES)
+            var n = 0
+            while (n < buf.size) {
+                val r = it.read(buf, n, buf.size - n)
+                if (r < 0) break
+                n += r
+            }
+            buf.copyOf(n)
+        }
+    }
+
+    /** Reads at most [limit] bytes; returns null if the file is larger. */
+    private fun readCapped(uri: Uri, limit: Long): ByteArray? {
         val input = resolver.openInputStream(uri) ?: throw IOException("cannot open")
         return input.use {
             val out = ByteArrayOutputStream()
@@ -94,7 +131,7 @@ class AndroidMediaPreparer(private val resolver: ContentResolver) : MediaPrepare
                 val n = it.read(buf)
                 if (n < 0) break
                 total += n
-                if (total > SendResult.MAX_ATTACHMENT_BYTES) return null
+                if (total > limit) return null
                 out.write(buf, 0, n)
             }
             out.toByteArray()
@@ -113,6 +150,7 @@ class AndroidMediaPreparer(private val resolver: ContentResolver) : MediaPrepare
         const val THUMB_BYTES = 16 * 1024
         const val AVATAR_SIDE = 256
         const val BUFFER = 64 * 1024
+        const val HEAD_BYTES = 32
         const val DEFAULT_TYPE = "application/octet-stream"
     }
 }
