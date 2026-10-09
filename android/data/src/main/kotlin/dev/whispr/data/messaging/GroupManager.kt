@@ -170,7 +170,7 @@ class GroupManager(
                 val rev = group.revision + 1
                 var rest = current.filter { it.userId != self.id }
                 if (rest.none { it.role == GroupRole.Admin.name && !it.invited }) {
-                    val heir = rest.filter { !it.invited }.minByOrNull { it.addedAt }
+                    val heir = rest.filter { !it.invited }.minWithOrNull(HEIR_ORDER)
                     rest = rest.map { if (it.userId == heir?.userId) it.copy(role = GroupRole.Admin.name) else it }
                 }
                 Change(group, rest, removed + (self.id to rev), note = "You left")
@@ -316,6 +316,7 @@ class GroupManager(
             if (merged != removedOf(local)) {
                 val kept = filterRemoved(members, merged)
                 commit(me, local, members, local.copy(removed = encodeRemoved(merged)), kept)
+                ensureAdmin(me, s.id)
             }
             return emptyList()
         }
@@ -336,6 +337,7 @@ class GroupManager(
             system(s.id, "${nameOf(sender)} changed the group picture")
         }
         commit(me, local, members, next, effective.map { it.toEntity(s.id) }, sender)
+        ensureAdmin(me, s.id)
         return effective.map { it.id }.filter { it != me }
     }
 
@@ -384,6 +386,31 @@ class GroupManager(
             dao.putGroup(next)
             broadcast(me, next, kept, kept.map { it.userId })
         }
+        ensureAdmin(me, groupId)
+    }
+
+    /**
+     * Two admins left at about the same time, each still counting on the
+     * other: nobody is admin any more. Every member promotes the same heir
+     * (earliest added, then lowest user ID) locally, and the heir publishes
+     * that as a new revision, which the others accept because they already
+     * see the heir as admin.
+     */
+    private fun ensureAdmin(me: String, groupId: String) {
+        val g = dao.group(groupId) ?: return
+        if (g.status != GroupStatus.Active.name) return
+        val members = dao.members(groupId)
+        val active = members.filter { !it.invited }
+        if (active.isEmpty() || active.any { it.role == GroupRole.Admin.name }) return
+        val heir = active.minWith(HEIR_ORDER)
+        val promoted = members.map { if (it.userId == heir.userId) it.copy(role = GroupRole.Admin.name) else it }
+        dao.clearMembers(groupId)
+        dao.putMembers(promoted)
+        if (heir.userId != me) return
+        val next = g.copy(revision = g.revision + 1, revisionAuthor = me)
+        dao.putGroup(next)
+        broadcast(me, next, promoted, promoted.map { it.userId })
+        system(groupId, "You are now an admin")
     }
 
     /**
@@ -612,3 +639,6 @@ class GroupManager(
         private const val MAX_TOMBSTONES = 1_000
     }
 }
+
+/** Who inherits the admin role: the longest-standing member, ties broken by user ID. */
+private val HEIR_ORDER = compareBy<GroupMemberEntity>({ it.addedAt }, { it.userId })

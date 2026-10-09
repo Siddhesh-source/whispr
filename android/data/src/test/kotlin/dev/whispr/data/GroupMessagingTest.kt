@@ -279,6 +279,23 @@ class GroupMessagingTest {
     }
 
     @Test
+    fun twoAdminsLeavingAtOnceStillLeaveAnAdmin() = runBlocking {
+        val g = createGroup()
+        assertTrue(alice.groups.setRole(g, UserId(bob.id), GroupRole.Admin) is GroupResult.Ok)
+        eventually("bob is admin") { bob.groups.observeGroup(g).first()!!.isAdmin }
+        // Bob's leave reaches Carol but not yet Alice, so Alice leaves still
+        // counting on Bob as the other admin and hands the role to nobody.
+        relay.defer = { it.sender == bob.id && it.recipient == alice.id }
+        assertTrue(bob.groups.leave(g) is GroupResult.Ok)
+        eventually("carol saw bob leave") {
+            carol.groups.observeGroup(g).first()!!.members.none { it.userId.value == bob.id }
+        }
+        assertTrue(alice.groups.leave(g) is GroupResult.Ok)
+        relay.release()
+        eventually("carol inherits the admin role") { carol.groups.observeGroup(g).first()!!.isAdmin }
+    }
+
+    @Test
     fun groupMessageArrivingBeforeTheSendersKeyIsHeldThenShown() = runBlocking {
         val g = createGroup()
         // Hold back Bob's pairwise envelopes to Carol (his sender key), let the group message through.
