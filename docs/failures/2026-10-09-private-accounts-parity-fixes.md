@@ -42,6 +42,21 @@ key check to `trusted` (calls and statuses), where it belongs.
 - Adding someone by code left them connected at once (`ContactTrustTest`
   now marks the acceptance).
 
+## CI: e2e live tests (after pushing)
+
+```
+LiveMessagingTest > twoDevicesChatAndOfflineDeliveryIsExactlyOnceInOrder FAILED
+LiveMessagingTest > scanAddsBothSidesAndSafetyNumbersVerify FAILED
+LiveMessagingTest > markerTravelsAndRestsOnlyAsCiphertext FAILED
+```
+
+The live tests added contacts one way and sent at once, which private
+accounts now refuse. Process miss: they were skipped locally because the
+server had not changed, but they drive the client's contact flow. Fixed with
+a `connect` helper (request, accept, wait for the acceptance) and by ignoring
+the "accepted your request" notice in status checks; all 5 live tests pass
+locally against `docker compose` before pushing again.
+
 ## Tooling
 
 - A trailing lambda in two tests bound to the new `transaction` parameter of
