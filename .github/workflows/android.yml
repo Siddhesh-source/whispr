@@ -50,7 +50,7 @@ jobs:
           restore-keys: robolectric-
       # One Gradle invocation: configuration happens once and tasks run in parallel.
       # :app:lintDebug covers the libraries too (checkDependencies = true).
-      # Screenshot tests are excluded here; see design-screenshots.yml.
+      # Screenshot tests never run in CI (local design review only).
       - name: Lint, test and assemble
         run: >-
           ./gradlew $GRADLE_FLAGS
