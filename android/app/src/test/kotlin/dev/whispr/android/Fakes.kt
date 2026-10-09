@@ -252,6 +252,9 @@ class FakeSettings : dev.whispr.domain.repository.SettingsRepository {
     override suspend fun setRelayCalls(enabled: Boolean) {
         privacy.value = privacy.value.copy(relayCalls = enabled)
     }
+    override suspend fun setUpdateChecks(enabled: Boolean) {
+        privacy.value = privacy.value.copy(updateChecks = enabled)
+    }
 }
 
 class FakeEncryption : dev.whispr.domain.repository.EncryptionRepository {

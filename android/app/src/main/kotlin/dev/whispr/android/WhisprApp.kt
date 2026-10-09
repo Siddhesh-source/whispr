@@ -11,6 +11,7 @@ import dev.whispr.android.di.ApplicationScope
 import dev.whispr.android.notifications.MessageNotifier
 import dev.whispr.android.push.PushManager
 import dev.whispr.android.session.SessionKeeper
+import dev.whispr.android.update.Updater
 import dev.whispr.data.media.MediaService
 import dev.whispr.data.messaging.MessagingEngine
 import dev.whispr.data.status.RoomStatusRepository
@@ -32,6 +33,8 @@ class WhisprApp : Application() {
 
     @Inject lateinit var calls: Lazy<CallSystem>
 
+    @Inject lateinit var updater: Lazy<Updater>
+
     @Inject lateinit var notifier: Lazy<MessageNotifier>
 
     @Inject lateinit var push: Lazy<PushManager>
@@ -52,6 +55,7 @@ class WhisprApp : Application() {
         scope.launch { push.get().start() }
         // Listen for calls from the start, so an offer that arrives with a push wake-up rings.
         calls.get().start(scope)
+        scope.launch { updater.get().checkIfDue() }
 
         // Keep the WebSocket open while the app is visible; in the background
         // the engine disconnects once the outbox is empty and relies on push.

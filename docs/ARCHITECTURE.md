@@ -639,6 +639,26 @@ accepted, visible and not key-changed.
 | App (JVM) | `CallManagerTest`: outgoing, incoming, timeouts, decline, busy, missed, stale offers, glare, failures, relay setting; `StatusCallsUiTest`; Roborazzi screenshots |
 | Server | `calls_test.go`: credential scheme, TTL, 503, per-user limit; config validation |
 
+## Updates
+
+Releases reach installed apps without a visit to GitHub:
+
+```
+tag vX.Y.Z[-beta.N] ─▶ release.yml: signed APK + update.json {versionCode, versionName, apk, sha256, size}
+                         published as "latest"
+app (release builds): every 12 h, or Settings → Check for updates
+  GET github.com/.../releases/latest/download/update.json
+  newer versionCode? ─▶ banner "Version X is available" ─▶ Update
+  download APK (size-capped) ─▶ SHA-256 must match ─▶ PackageInstaller session ─▶ user confirms
+  Android refuses an APK not signed with the installed app's key
+```
+
+`versionCode` is derived from `versionName` (MAJOR·1e6 + MINOR·1e4 +
+PATCH·100 + beta number, 99 for a final release), in Gradle and in the
+workflow. Development builds have no update URL and never check. The check
+contacts GitHub (it sees the IP address); Settings can turn automatic checks
+off. Tests: `UpdaterTest`.
+
 ## Planned next (not built)
 
 - Encrypted profiles (replaces the plaintext display name on the server).

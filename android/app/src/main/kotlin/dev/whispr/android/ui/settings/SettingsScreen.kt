@@ -54,6 +54,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.whispr.android.R
 import dev.whispr.android.ui.FilterObscuredTouches
 import dev.whispr.android.ui.rememberAvatarBitmap
+import dev.whispr.android.update.UpdateState
+import dev.whispr.android.update.UpdateViewModel
+import dev.whispr.android.update.message
 import dev.whispr.core.designsystem.component.ErrorState
 import dev.whispr.core.designsystem.component.LoadingState
 import dev.whispr.core.designsystem.component.OfflineBanner
@@ -85,6 +88,7 @@ fun SettingsRoute(
         onMyCode = onMyCode,
         onScreenSecurity = viewModel::setScreenSecurity,
         onRelayCalls = viewModel::setRelayCalls,
+        updates = { st -> UpdateRows(auto = st.updateChecks, onUpdateChecks = viewModel::setUpdateChecks) },
         deletion = deletion,
         onDeleteAccount = viewModel::deleteAccount,
         onDismissDeletion = viewModel::dismissDeletionError,
@@ -108,6 +112,8 @@ fun SettingsScreen(
     onMyCode: () -> Unit = {},
     onScreenSecurity: (Boolean) -> Unit = {},
     onRelayCalls: (Boolean) -> Unit = {},
+    /** Release builds: the update check rows in About. */
+    updates: @Composable (SettingsUiState.Content) -> Unit = {},
     deletion: Deletion = Deletion.Idle,
     onDeleteAccount: () -> Unit = {},
     onDismissDeletion: () -> Unit = {},
@@ -137,6 +143,7 @@ fun SettingsScreen(
                     onMyCode,
                     onScreenSecurity,
                     onRelayCalls,
+                    updates,
                     onDelete = { confirming = true },
                 )
             }
@@ -216,6 +223,7 @@ private fun SettingsContent(
     onMyCode: () -> Unit,
     onScreenSecurity: (Boolean) -> Unit,
     onRelayCalls: (Boolean) -> Unit,
+    updates: @Composable (SettingsUiState.Content) -> Unit,
     onDelete: () -> Unit,
 ) {
     val clipboard = LocalClipboard.current
@@ -321,6 +329,7 @@ private fun SettingsContent(
                     SettingRow(stringResource(R.string.settings_connection), connectionText(state.connection))
                     GroupDivider()
                     SettingRow(stringResource(R.string.settings_version), state.version)
+                    updates(state)
                 }
 
                 Spacer(Modifier.height(spacing.xl))
@@ -444,3 +453,38 @@ private fun connectionText(status: ConnectionStatus) = stringResource(
         ConnectionStatus.Unavailable -> R.string.settings_connection_unavailable
     },
 )
+
+/** "Check for updates" and its automatic switch; only in builds that can update themselves. */
+@Composable
+private fun UpdateRows(auto: Boolean, onUpdateChecks: (Boolean) -> Unit, viewModel: UpdateViewModel = hiltViewModel()) {
+    if (!viewModel.enabled) return
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    GroupDivider()
+    NavRow(
+        when (val s = state) {
+            UpdateState.Checking -> stringResource(R.string.update_checking)
+            UpdateState.UpToDate -> stringResource(R.string.update_up_to_date)
+            is UpdateState.Available -> stringResource(R.string.update_available, s.manifest.versionName)
+            is UpdateState.Downloading -> stringResource(R.string.update_downloading)
+            is UpdateState.Installing -> stringResource(R.string.update_installing)
+            is UpdateState.NeedsPermission -> stringResource(R.string.update_needs_permission)
+            is UpdateState.Failed -> stringResource(s.reason.message())
+            UpdateState.Idle -> stringResource(R.string.update_check)
+        },
+        WhisprIcons.Refresh,
+        {
+            when (val s = state) {
+                is UpdateState.Available -> viewModel.update(s.manifest)
+                is UpdateState.Failed -> s.manifest?.let(viewModel::update) ?: viewModel.check()
+                else -> viewModel.check()
+            }
+        },
+    )
+    GroupDivider()
+    ToggleRow(
+        stringResource(R.string.update_auto),
+        stringResource(R.string.update_auto_body),
+        auto,
+        onUpdateChecks,
+    )
+}

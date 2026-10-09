@@ -384,4 +384,21 @@
     <string name="call_notification_ongoing">Call in progress</string>
     <string name="settings_relay_calls">Relay calls through the server</string>
     <string name="settings_relay_calls_summary">Hides your IP address from the people you call. Calls may sound a little worse.</string>
+    <!-- Updates -->
+    <string name="update_check">Check for updates</string>
+    <string name="update_checking">Checking for updates…</string>
+    <string name="update_up_to_date">Whispr is up to date</string>
+    <string name="update_available">Version %1$s is available</string>
+    <string name="update_now">Update</string>
+    <string name="update_later">Later</string>
+    <string name="update_retry">Try again</string>
+    <string name="update_downloading">Downloading the update…</string>
+    <string name="update_installing">Confirm the update to install it</string>
+    <string name="update_needs_permission">Allow Whispr to install its updates, then tap Update again</string>
+    <string name="update_allow">Allow</string>
+    <string name="update_failed_network">Couldn\'t download the update. Check your connection.</string>
+    <string name="update_failed_corrupt">The download didn\'t match the published release and was deleted.</string>
+    <string name="update_failed_install">Android couldn\'t install the update.</string>
+    <string name="update_auto">Check for updates automatically</string>
+    <string name="update_auto_body">Twice a day, from GitHub, where releases are published. GitHub sees your IP address.</string>
 </resources>

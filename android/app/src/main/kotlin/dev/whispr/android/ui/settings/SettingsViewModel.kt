@@ -41,6 +41,7 @@ sealed interface SettingsUiState {
         val keysRegistered: Boolean = true,
         val screenSecurity: Boolean = true,
         val relayCalls: Boolean = false,
+        val updateChecks: Boolean = true,
     ) : SettingsUiState
 }
 
@@ -77,6 +78,7 @@ class SettingsViewModel @Inject constructor(
             keysRegistered = keysRegistered,
             screenSecurity = privacy.screenSecurity,
             relayCalls = privacy.relayCalls,
+            updateChecks = privacy.updateChecks,
         )
     }
         .catch { emit(SettingsUiState.Error) }
@@ -92,6 +94,10 @@ class SettingsViewModel @Inject constructor(
 
     fun setScreenSecurity(enabled: Boolean) {
         viewModelScope.launch { settings.setScreenSecurity(enabled) }
+    }
+
+    fun setUpdateChecks(enabled: Boolean) {
+        viewModelScope.launch { settings.setUpdateChecks(enabled) }
     }
 
     fun setRelayCalls(enabled: Boolean) {

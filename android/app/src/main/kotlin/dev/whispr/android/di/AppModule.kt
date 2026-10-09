@@ -9,6 +9,7 @@ import dagger.hilt.components.SingletonComponent
 import dev.whispr.android.BuildConfig
 import dev.whispr.android.calls.CallManager
 import dev.whispr.android.calls.WebRtcEnvironment
+import dev.whispr.android.update.Updater
 import dev.whispr.data.di.InsecureLoopbackAllowed
 import dev.whispr.data.network.ServerConfig
 import dev.whispr.domain.repository.CallLogRepository
@@ -40,6 +41,9 @@ object AppModule {
 
     @Provides @Singleton @ApplicationScope
     fun applicationScope(): CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    @Provides @Singleton
+    fun updater(@ApplicationContext context: Context, settings: SettingsRepository) = Updater(context, settings)
 
     @Provides @Singleton
     fun webRtc(@ApplicationContext context: Context) = WebRtcEnvironment(context)

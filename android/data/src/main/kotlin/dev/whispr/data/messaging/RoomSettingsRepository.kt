@@ -16,6 +16,7 @@ class RoomSettingsRepository(private val dao: SettingDao) : SettingsRepository {
             typingIndicators = map[TYPING] == "true",
             screenSecurity = map[SCREEN_SECURITY] != "false",
             relayCalls = map[RELAY_CALLS] == "true",
+            updateChecks = map[UPDATE_CHECKS] != "false",
         )
     }
 
@@ -28,7 +29,10 @@ class RoomSettingsRepository(private val dao: SettingDao) : SettingsRepository {
 
     override suspend fun setRelayCalls(enabled: Boolean) = dao.put(SettingEntity(RELAY_CALLS, enabled.toString()))
 
+    override suspend fun setUpdateChecks(enabled: Boolean) = dao.put(SettingEntity(UPDATE_CHECKS, enabled.toString()))
+
     private companion object {
+        const val UPDATE_CHECKS = "app.update_checks"
         const val RELAY_CALLS = "privacy.relay_calls"
         const val READ_RECEIPTS = "privacy.read_receipts"
         const val TYPING = "privacy.typing_indicators"

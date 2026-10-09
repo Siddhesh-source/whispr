@@ -369,6 +369,8 @@ Design: `docs/designs/camera-gifs-status-calls.md`.
 | The relay used to reach internal services | coturn denies private, loopback, link-local and metadata peers | Done |
 | Relay bandwidth exhausts the free tier | Per-session and total caps | Done |
 | TURN credentials reused | Valid 10 minutes, bound to the account | Done |
+| A tampered in-app update | The APK must match the SHA-256 in the release manifest, and Android installs it only if it is signed with the installed app's key; the manifest and APK come over HTTPS from GitHub | Done, tested (`UpdaterTest`) |
+| Update checks reveal who uses Whispr | Twice a day to GitHub, which sees the IP address; off switch in Settings; development builds never check | By design; documented |
 
 ### Accepted limitations
 

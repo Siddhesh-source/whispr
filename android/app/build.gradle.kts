@@ -23,6 +23,11 @@ val debugServerUrl = providers.gradleProperty("whispr.serverUrl").getOrElse("htt
 // -Pwhispr.allowUnpinned=true builds without pins (self-hosters who rotate
 // certificates through a CA they trust); docs/DEPLOYMENT.md explains the trade-off.
 val releaseServerUrl = providers.gradleProperty("whispr.releaseServerUrl").getOrElse("")
+
+// The newest release's update manifest (written by release.yml). One stable URL:
+// GitHub redirects "latest" to the newest published release.
+val updateUrl = providers.gradleProperty("whispr.updateUrl")
+    .getOrElse("https://github.com/Siddhesh-source/whispr/releases/latest/download/update.json")
 val certPins = providers.gradleProperty("whispr.certPins").getOrElse("")
     .split(",").map { it.trim() }.filter { it.isNotEmpty() }
 val allowUnpinned = providers.gradleProperty("whispr.allowUnpinned").getOrElse("false").toBoolean()
@@ -61,8 +66,10 @@ android {
         applicationId = "dev.whispr.android"
         minSdk = 26
         targetSdk = 37
-        versionCode = 1
-        versionName = "0.1.0-beta.1"
+        versionName = "0.1.0-beta.2"
+        // Derived, so every release is an upgrade: MAJOR*1_000_000 + MINOR*10_000 +
+        // PATCH*100 + beta number (99 for a final release). 0.1.0-beta.2 is 10002.
+        versionCode = versionCodeOf(versionName!!)
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // libsignal and libwebrtc are native: ship phones (arm) and emulators (x86_64) only.
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
@@ -88,10 +95,13 @@ android {
         debug {
             buildConfigField("String", "SERVER_URL", "\"$debugServerUrl\"")
             buildConfigField("String", "CERT_PINS", "\"\"")
+            // Development builds never update themselves.
+            buildConfigField("String", "UPDATE_URL", "\"\"")
         }
         release {
             buildConfigField("String", "SERVER_URL", "\"$releaseServerUrl\"")
             buildConfigField("String", "CERT_PINS", "\"${certPins.joinToString(",")}\"")
+            buildConfigField("String", "UPDATE_URL", "\"$updateUrl\"")
             signingConfig = signingConfigs.findByName("release")
             isMinifyEnabled = true
             isShrinkResources = true
@@ -175,6 +185,7 @@ dependencies {
     // QR scanning: zxing-cpp (open source, on-device, no Google services) on a CameraX preview.
     implementation(libs.zxing.cpp)
     implementation(libs.webrtc)
+    implementation(libs.okhttp) // in-app updates (update/Updater.kt)
     implementation(libs.camera.camera2)
     implementation(libs.camera.lifecycle)
     implementation(libs.camera.compose)
@@ -195,6 +206,7 @@ dependencies {
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.turbine)
+    testImplementation(libs.okhttp.mockwebserver)
     testImplementation(libs.androidx.navigation.testing)
     testImplementation(libs.robolectric)
     testImplementation(libs.androidx.test.core)
@@ -236,3 +248,14 @@ val checkDesignTokens = tasks.register("checkDesignTokens") {
     }
 }
 tasks.named("check") { dependsOn(checkDesignTokens) }
+
+/** See defaultConfig: a monotonic versionCode from a "MAJOR.MINOR.PATCH[-beta.N]" versionName. */
+fun versionCodeOf(name: String): Int {
+    val m = Regex("""^(\d+)\.(\d+)\.(\d+)(?:-beta\.(\d+))?$""").matchEntire(name)
+        ?: error("versionName must look like 1.2.3 or 1.2.3-beta.4, got $name")
+    val (major, minor, patch, beta) = m.destructured
+    require(minor.toInt() < 100 && patch.toInt() < 100 && (beta.isEmpty() || beta.toInt() in 1..98)) {
+        "versionName part out of range: $name"
+    }
+    return major.toInt() * 1_000_000 + minor.toInt() * 10_000 + patch.toInt() * 100 + (beta.toIntOrNull() ?: 99)
+}

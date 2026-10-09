@@ -247,6 +247,8 @@ interface SettingsRepository {
     suspend fun setScreenSecurity(enabled: Boolean)
 
     suspend fun setRelayCalls(enabled: Boolean)
+
+    suspend fun setUpdateChecks(enabled: Boolean)
 }
 
 interface EncryptionRepository {

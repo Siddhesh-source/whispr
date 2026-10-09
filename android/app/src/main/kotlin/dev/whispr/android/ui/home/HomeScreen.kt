@@ -20,6 +20,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.whispr.android.R
+import dev.whispr.android.update.UpdateBanner
+import dev.whispr.android.update.UpdateViewModel
 import dev.whispr.core.designsystem.component.BottomBarTab
 import dev.whispr.core.designsystem.component.WhisprBottomBar
 import dev.whispr.core.designsystem.icon.WhisprIcons
@@ -62,9 +64,19 @@ fun HomeRoute(
     openCallsTab: Boolean = false,
     onCallsTabOpened: () -> Unit = {},
     viewModel: HomeViewModel = hiltViewModel(),
+    updates: UpdateViewModel = hiltViewModel(),
 ) {
     val badges by viewModel.badges.collectAsStateWithLifecycle()
-    HomeScreen(badges, chats, status, calls, openCallsTab = openCallsTab, onCallsTabOpened = onCallsTabOpened)
+    val update by updates.state.collectAsStateWithLifecycle()
+    HomeScreen(
+        badges,
+        chats,
+        status,
+        calls,
+        openCallsTab = openCallsTab,
+        onCallsTabOpened = onCallsTabOpened,
+        banner = { UpdateBanner(update, updates::update, updates::dismiss, updates::permissionIntent) },
+    )
 }
 
 @Composable
@@ -76,6 +88,7 @@ fun HomeScreen(
     initial: HomeTab = HomeTab.Chats,
     openCallsTab: Boolean = false,
     onCallsTabOpened: () -> Unit = {},
+    banner: @Composable () -> Unit = {},
 ) {
     var selected by rememberSaveable { mutableIntStateOf(initial.ordinal) }
     LaunchedEffect(openCallsTab) {
@@ -98,6 +111,7 @@ fun HomeScreen(
                 HomeTab.Calls -> calls()
             }
         }
+        banner()
         WhisprBottomBar(tabs = tabs, selected = selected, onSelect = { selected = it })
     }
 }

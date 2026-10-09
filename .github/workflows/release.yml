@@ -1,7 +1,9 @@
 name: release
 
 # Builds the signed Android release for a version tag (v0.1.0-beta.1) and
-# attaches the APK, AAB and SHA256SUMS to a GitHub release.
+# attaches the APK, AAB, SHA256SUMS and update.json to a GitHub release.
+# Installed apps check releases/latest/download/update.json, so every release
+# is published as "latest" and reaches users from inside the app.
 #
 # Repository secrets: WHISPR_KEYSTORE_BASE64 (the release keystore, base64),
 # WHISPR_KEYSTORE_PASSWORD, WHISPR_KEY_ALIAS, WHISPR_KEY_PASSWORD.
@@ -76,6 +78,23 @@ jobs:
           cp app/build/outputs/bundle/release/app-release.aab "$RUNNER_TEMP/out/whispr-$GITHUB_REF_NAME.aab"
           "$apksigner" verify --print-certs "$RUNNER_TEMP/out/whispr-$GITHUB_REF_NAME.apk" | tee "$RUNNER_TEMP/out/SIGNING-CERT.txt"
           cd "$RUNNER_TEMP/out" && sha256sum whispr-* > SHA256SUMS && cat SHA256SUMS
+      - name: Write the update manifest
+        working-directory: ${{ runner.temp }}/out
+        run: |
+          apk="whispr-$GITHUB_REF_NAME.apk"
+          name=${GITHUB_REF_NAME#v}
+          # Same formula as versionCodeOf() in app/build.gradle.kts.
+          IFS=. read -r major minor rest <<< "${name%%-*}"
+          patch=$rest
+          beta=99
+          case "$name" in *-beta.*) beta=${name##*-beta.} ;; esac
+          code=$((major * 1000000 + minor * 10000 + patch * 100 + beta))
+          jq -n --argjson code "$code" --arg name "$name" \
+            --arg apk "https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME/$apk" \
+            --arg sha "$(sha256sum "$apk" | cut -d' ' -f1)" --argjson size "$(stat -c %s "$apk")" \
+            --arg notes "https://github.com/$GITHUB_REPOSITORY/releases/tag/$GITHUB_REF_NAME" \
+            '{versionCode: $code, versionName: $name, apk: $apk, sha256: $sha, size: $size, notes: $notes}' > update.json
+          cat update.json
       - name: Remove keystore
         if: always()
         run: rm -f "$RUNNER_TEMP/release.jks"
@@ -83,9 +102,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          prerelease=""
-          case "$GITHUB_REF_NAME" in *-*) prerelease="--prerelease" ;; esac
           cd "$RUNNER_TEMP/out"
-          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag $prerelease \
+          # Always "latest", betas too: installed apps update from the latest release.
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag --latest \
             --title "Whispr $GITHUB_REF_NAME" --generate-notes \
-            whispr-* SHA256SUMS SIGNING-CERT.txt
+            whispr-* SHA256SUMS SIGNING-CERT.txt update.json

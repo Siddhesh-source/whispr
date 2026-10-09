@@ -205,4 +205,6 @@ data class PrivacySettings(
     val screenSecurity: Boolean = true,
     /** Calls go only through the server's relay, hiding your IP address from the people you call. */
     val relayCalls: Boolean = false,
+    /** Look for a new version twice a day (asks GitHub, where releases are published). */
+    val updateChecks: Boolean = true,
 )
