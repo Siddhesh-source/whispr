@@ -101,7 +101,7 @@ class CallSystem @Inject constructor(
         val caller = Person.Builder().setName(call.peerName.ifEmpty { "Whispr" }).setImportant(true).build()
         val open = activityIntent(MainActivity.ACTION_SHOW_CALL, REQUEST_OPEN)
         val notification = NotificationCompat.Builder(context, RING_CHANNEL)
-            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(call.peerName)
             .setContentText(
                 context.getString(if (call.video) R.string.call_ringing_video else R.string.call_ringing_voice),
@@ -127,7 +127,7 @@ class CallSystem @Inject constructor(
     private fun missed(call: CallUi) {
         if (!canNotify()) return
         val notification = NotificationCompat.Builder(context, RING_CHANNEL)
-            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(context.getString(R.string.call_ended_missed))
             .setContentText(call.peerName)
             .setCategory(NotificationCompat.CATEGORY_MISSED_CALL)
@@ -186,7 +186,7 @@ class CallService : Service() {
             ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
         val person = Person.Builder().setName(call.peerName.ifEmpty { "Whispr" }).build()
         val notification = NotificationCompat.Builder(this, CallSystem.ONGOING_CHANNEL)
-            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(call.peerName)
             .setContentText(getString(R.string.call_notification_ongoing))
             .setCategory(NotificationCompat.CATEGORY_CALL)

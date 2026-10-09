@@ -76,11 +76,11 @@ class MessageNotifier @Inject constructor(
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
         val publicVersion = NotificationCompat.Builder(context, CHANNEL)
-            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(context.getString(R.string.notification_new_message))
             .build()
         val notification = NotificationCompat.Builder(context, CHANNEL)
-            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(sender)
             .setContentText(text)
             .setAutoCancel(true)
