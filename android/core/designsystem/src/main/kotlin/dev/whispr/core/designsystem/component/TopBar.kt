@@ -1,5 +1,6 @@
 package dev.whispr.core.designsystem.component
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -22,6 +23,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
@@ -51,6 +53,9 @@ fun WhisprTopBar(
     large: Boolean = false,
     divider: Boolean = false,
     leading: (@Composable () -> Unit)? = null,
+    /** Makes the avatar and title one button (e.g. open the contact's profile), announced as [titleClickLabel]. */
+    onTitleClick: (() -> Unit)? = null,
+    titleClickLabel: String? = null,
     actions: @Composable RowScope.() -> Unit = {},
 ) {
     val scheme = MaterialTheme.colorScheme
@@ -94,6 +99,11 @@ fun WhisprTopBar(
         TopAppBar(
             title = {
                 Row(
+                    modifier = if (onTitleClick != null) {
+                        Modifier.clickable(onClickLabel = titleClickLabel, role = Role.Button, onClick = onTitleClick)
+                    } else {
+                        Modifier
+                    },
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(WhisprTheme.spacing.md),
                 ) {

@@ -45,15 +45,24 @@ data class Contact(
     val displayName: String,
     val identityKey: ByteArray,
     val trust: TrustState = TrustState.Unverified,
-    /** They added us (or messaged us) and we have not accepted yet. */
+    /** They asked to connect and we have not accepted yet. */
     val isRequest: Boolean = false,
+    /** We asked to connect and they have not accepted yet: nothing else can be sent. */
+    val awaitingAccept: Boolean = false,
+    /** Their profile photo (JPEG), as they shared it with us. */
+    val avatar: ByteArray? = null,
 ) {
+    /** Both sides accepted: messages, calls and statuses flow. */
+    val connected: Boolean get() = !isRequest && !awaitingAccept
+
     override fun equals(other: Any?) = other is Contact &&
         userId == other.userId &&
         displayName == other.displayName &&
         identityKey.contentEquals(other.identityKey) &&
         trust == other.trust &&
-        isRequest == other.isRequest
+        isRequest == other.isRequest &&
+        awaitingAccept == other.awaitingAccept &&
+        (avatar ?: ByteArray(0)).contentEquals(other.avatar ?: ByteArray(0))
 
     override fun hashCode() = userId.hashCode()
 }
@@ -200,11 +209,13 @@ sealed interface ProfileResult {
  * screen security (no screenshots, recordings or recents thumbnails) is on.
  */
 data class PrivacySettings(
-    val readReceipts: Boolean = false,
+    val readReceipts: Boolean = true,
     val typingIndicators: Boolean = false,
     val screenSecurity: Boolean = true,
     /** Calls go only through the server's relay, hiding your IP address from the people you call. */
     val relayCalls: Boolean = false,
     /** Look for a new version twice a day (asks GitHub, where releases are published). */
     val updateChecks: Boolean = true,
+    /** Where saved files and backups go: a folder the user picked (document tree URI), or Downloads/Whispr. */
+    val saveFolder: String? = null,
 )

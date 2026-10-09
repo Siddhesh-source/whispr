@@ -166,9 +166,20 @@ interface CryptoDao {
     @Upsert
     fun putSetting(setting: SettingEntity)
 
+    @Query("SELECT * FROM account WHERE id = 0")
+    fun account(): AccountEntity?
+
     // Contacts (identity pins)
     @Query("SELECT * FROM contacts WHERE userId = :userId")
     fun contact(userId: String): ContactEntity?
+
+    /** Accepted contacts we can send to: the audience of our profile and statuses. */
+    @Query(
+        """SELECT userId FROM contacts
+            WHERE isRequest = 0 AND hidden = 0 AND awaitingAccept = 0 AND trust != 'KeyChanged'
+              AND length(identityKey) > 0""",
+    )
+    fun connectedIds(): List<String>
 
     @Upsert
     fun putContact(contact: ContactEntity)

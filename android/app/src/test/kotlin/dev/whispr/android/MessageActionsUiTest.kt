@@ -83,6 +83,7 @@ class MessageActionsUiTest {
         messaging,
         FakeGroups(),
         ActiveConversation(),
+        FakeSettings(),
     )
 
     @Test

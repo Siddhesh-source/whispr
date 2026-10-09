@@ -18,6 +18,7 @@ import dev.whispr.data.db.Placeholder
 import dev.whispr.data.db.ReactionEntity
 import dev.whispr.data.db.SeenEnvelopeEntity
 import dev.whispr.data.db.StatusEntity
+import dev.whispr.data.db.StatusViewEntity
 import dev.whispr.data.db.WhisprDatabase
 import dev.whispr.data.network.UserResponse
 import dev.whispr.domain.model.AttachmentKind
@@ -31,7 +32,6 @@ import dev.whispr.domain.model.IceCandidate
 import dev.whispr.domain.model.IncomingCallSignal
 import dev.whispr.domain.model.MessageRules
 import dev.whispr.domain.model.StatusRules
-import dev.whispr.domain.model.TrustState
 import dev.whispr.domain.model.UserId
 import java.time.Instant
 import java.util.Base64
@@ -340,7 +340,10 @@ class IncomingPipeline(
         dao.markSeen(SeenEnvelopeEntity(e.sender, e.id, clock()))
         dao.clearAttempts(e.sender, e.id)
         val conversation = ConversationId.direct(UserId(me), UserId(e.sender))
-        val stranger = dao.contact(e.sender)?.displayName == SignalStore.UNKNOWN_CONTACT
+        val contact = dao.contact(e.sender)
+        val stranger = contact?.displayName == SignalStore.UNKNOWN_CONTACT
+        // Private by default: only a request (and its answer) gets through until both sides said yes.
+        val connected = ContactLink.connected(contact)
         val p = PayloadCodec.decode(plaintext)
         // A held envelope that turned out not to be shown content leaves no bubble.
         val content = (p is Payload.Text && p.g == null) || (p is Payload.Media && p.g == null)
@@ -349,27 +352,27 @@ class IncomingPipeline(
         if (!content) replaces?.let { resolve(e.sender, it, delete = true) }
         return when (p) {
             // Group content only ever travels under a sender key, never pairwise.
-            is Payload.Text -> if (p.g != null) {
-                Applied()
-            } else {
-                applyContent(conversation, e, p.mid, p.ts, p.replaces, p.body, null, null, stranger, p.meta())
+            is Payload.Text -> when {
+                p.g != null -> Applied()
+                !connected -> refused(e, replaces, stranger)
+                else -> applyContent(conversation, e, p.mid, p.ts, p.replaces, p.body, null, null, stranger, p.meta())
             }
-            is Payload.Media -> if (p.g != null) {
-                Applied()
-            } else {
-                applyContent(conversation, e, p.mid, p.ts, p.replaces, "", p.a, null, stranger, p.meta())
+            is Payload.Media -> when {
+                p.g != null -> Applied()
+                !connected -> refused(e, replaces, stranger)
+                else -> applyContent(conversation, e, p.mid, p.ts, p.replaces, "", p.a, null, stranger, p.meta())
             }
-            is Payload.Delete -> if (p.g == null) {
+            is Payload.Delete -> if (p.g == null && connected) {
                 deleted(conversation, applyDelete(conversation.value, e.sender, p.target, e.serverTs))
             } else {
                 Applied()
             }
             is Payload.Timer -> {
-                if (p.g == null) applyTimer(conversation.value, e.sender, e.sender, p)
+                if (p.g == null && connected) applyTimer(conversation.value, e.sender, e.sender, p)
                 Applied()
             }
             is Payload.Reaction -> {
-                if (p.g == null && (p.author == me || p.author == e.sender)) {
+                if (p.g == null && connected && (p.author == me || p.author == e.sender)) {
                     applyReaction(conversation.value, e.sender, p)
                 }
                 Applied()
@@ -379,8 +382,28 @@ class IncomingPipeline(
                 Applied()
             }
             is Payload.ContactRequest -> {
-                applyContactRequest(e.sender, p)
+                applyContactRequest(conversation, e.sender, p)
                 Applied(lookupSender = true)
+            }
+            is Payload.ContactAccept -> {
+                applyContactAccept(conversation, e.sender)
+                Applied()
+            }
+            is Payload.Profile -> {
+                if (connected) applyProfile(contact!!, p)
+                Applied()
+            }
+            is Payload.GroupInfo -> {
+                groups.applyInfo(me, e.sender, p)
+                Applied()
+            }
+            is Payload.StatusSeen -> {
+                if (connected) applyStatusView(me, e.sender, p.sid, liked = null)
+                Applied()
+            }
+            is Payload.StatusLike -> {
+                if (connected) applyStatusView(me, e.sender, p.sid, liked = p.liked)
+                Applied()
             }
             is Payload.SessionReset -> {
                 answerReset(conversation, e.sender, p.failed)
@@ -472,12 +495,6 @@ class IncomingPipeline(
         }
         replaces?.let { dao.resolveReset(e.sender, it) }
         if (row != -1L && attachment != null) db.groupDao().putAttachment(attachment.copy(messageRow = row))
-        if (group == null) {
-            // A group member we only knew from a group now writes to us directly: a message request.
-            dao.contact(e.sender)?.takeIf { it.hidden }?.let {
-                dao.putContact(it.copy(hidden = false, isRequest = true))
-            }
-        }
         val name = dao.contact(e.sender)?.displayName ?: SignalStore.UNKNOWN_CONTACT
         val preview = if (attachment != null) Attachments.preview(attachment.kind) else body
         val title = if (group != null) "$name · $group" else name
@@ -555,9 +572,13 @@ class IncomingPipeline(
      * (now pinned via the store); a mismatch is flagged, never adopted.
      */
     /** Statuses and calls come only from contacts we accepted and whose key we trust. */
-    private fun trustedContact(sender: String): Boolean {
-        val c = dao.contact(sender) ?: return false
-        return !c.isRequest && !c.hidden && c.trust != TrustState.KeyChanged.name && c.identityKey.isNotEmpty()
+    private fun trustedContact(sender: String): Boolean = ContactLink.trusted(dao.contact(sender))
+
+    /** 1:1 content from someone we aren't connected with: dropped, leaving no trace. */
+    private fun refused(e: IncomingEnvelope, replaces: String?, stranger: Boolean): Applied {
+        dao.deletePlaceholder(e.sender, e.id)
+        replaces?.let { resolve(e.sender, it, delete = true) }
+        return Applied(lookupSender = stranger)
     }
 
     private fun applyStatus(sender: String, p: Payload.Status) {
@@ -627,19 +648,64 @@ class IncomingPipeline(
         return IncomingCallSignal(UserId(e.sender), signal, Instant.ofEpochMilli(e.serverTs))
     }
 
-    private fun applyContactRequest(sender: String, p: Payload.ContactRequest) {
+    /**
+     * Someone asks to connect. It waits for the user to accept, unless we
+     * asked them too (both said yes) or they are already a contact who lost
+     * us (a reinstall): then we answer at once.
+     */
+    private fun applyContactRequest(conversation: ConversationId, sender: String, p: Payload.ContactRequest) {
         val key = runCatching { Base64.getDecoder().decode(p.key) }.getOrNull()
             ?.takeIf { runCatching { IdentityKey(it) }.isSuccess } ?: return
-        val contact =
-            dao.contact(sender)
-                ?: ContactEntity(sender, SignalStore.UNKNOWN_CONTACT, ByteArray(0), clock(), isRequest = true)
+        val existing = dao.contact(sender)
+        val contact = existing ?: ContactEntity(sender, SignalStore.UNKNOWN_CONTACT, ByteArray(0), clock())
         val named = if (contact.displayName == SignalStore.UNKNOWN_CONTACT) {
             contact.copy(displayName = p.name.take(MAX_NAME).ifBlank { SignalStore.UNKNOWN_CONTACT })
         } else {
             contact
         }
-        dao.putContact(if (named.identityKey.isEmpty()) named.copy(identityKey = key) else named)
+        val pinned = if (named.identityKey.isEmpty()) named.copy(identityKey = key) else named
+        when {
+            existing?.awaitingAccept == true -> {
+                dao.putContact(pinned.copy(awaitingAccept = false, isRequest = false, hidden = false))
+                ContactLink.accept(dao, sender, clock)
+                dao.insertMessage(MessageDeletion.notice(conversation.value, sender, CONNECTED, clock()))
+            }
+            ContactLink.connected(existing) -> ContactLink.accept(dao, sender, clock)
+            else -> dao.putContact(pinned.copy(isRequest = true, hidden = false))
+        }
         if (named.identityKey.isNotEmpty() && !named.identityKey.contentEquals(key)) dao.flagKeyChange(sender, key)
+    }
+
+    /** Only counts if we asked them. */
+    private fun applyContactAccept(conversation: ConversationId, sender: String) {
+        val c = dao.contact(sender)?.takeIf { it.awaitingAccept } ?: return
+        dao.putContact(c.copy(awaitingAccept = false, isRequest = false, hidden = false))
+        ContactLink.sendProfile(dao, sender, clock)
+        dao.insertMessage(
+            MessageDeletion.notice(conversation.value, sender, "${c.displayName} accepted your request", clock()),
+        )
+    }
+
+    private fun applyProfile(c: ContactEntity, p: Payload.Profile) {
+        val avatar = p.avatar?.let { runCatching { Base64.getDecoder().decode(it) }.getOrNull() }
+            ?.takeIf { it.size <= Payload.Profile.MAX_AVATAR_BYTES }
+        val name = p.name.trim().take(MAX_NAME).ifBlank { c.displayName }
+        dao.putContact(c.copy(displayName = name, avatar = avatar))
+    }
+
+    /** A contact viewed (or liked) one of our statuses. */
+    private fun applyStatusView(me: String, viewer: String, sid: String, liked: Boolean?) {
+        val sdao = db.statusDao()
+        if (sid.length > MAX_ID || sdao.get(me, sid) == null) return
+        val existing = sdao.view(sid, viewer)
+        sdao.putView(
+            StatusViewEntity(
+                statusId = sid,
+                viewerId = viewer,
+                viewedAt = existing?.viewedAt ?: clock(),
+                liked = liked ?: existing?.liked ?: false,
+            ),
+        )
     }
 
     /**
@@ -743,6 +809,7 @@ class IncomingPipeline(
         const val STATUS_TEXT = "text"
         const val STATUS_IMAGE = "image"
         private const val MAX_EMOJI = 16
+        private const val CONNECTED = "You're now connected"
 
         /** A delete may arrive a little after the window (queued while offline, clock skew). */
         private const val DELETE_CLOCK_SLACK_MS = 60 * 60 * 1000L
@@ -760,15 +827,18 @@ class IncomingPipeline(
             is Payload.Text -> KIND_TEXT
             is Payload.Media -> KIND_MEDIA
             is Payload.Read -> "read"
-            is Payload.ContactRequest -> "contact_request"
+            is Payload.ContactRequest, is Payload.ContactAccept -> "contact_request"
+            is Payload.Profile -> "profile"
             is Payload.Reaction -> "reaction"
             is Payload.Delete -> "delete"
             is Payload.Timer -> "timer"
             is Payload.SenderKey -> "sender_key"
-            is Payload.GroupUpdate, is Payload.GroupJoin, is Payload.GroupDecline, is Payload.GroupLeave -> "group"
+            is Payload.GroupUpdate, is Payload.GroupJoin, is Payload.GroupDecline, is Payload.GroupLeave,
+            is Payload.GroupInfo,
+            -> "group"
             // Never resent after a session reset: a late offer would ring, a status is ephemeral.
             Payload.Typing, is Payload.SessionReset, is Payload.ResetDone,
-            is Payload.Status, is Payload.StatusDelete,
+            is Payload.Status, is Payload.StatusDelete, is Payload.StatusSeen, is Payload.StatusLike,
             is Payload.CallOffer, is Payload.CallAnswer, is Payload.CallIce, is Payload.CallHangup,
             -> KIND_CONTROL
         }
@@ -790,13 +860,16 @@ class IncomingPipeline(
             is Payload.Timer -> replaces
             is Payload.Read -> replaces
             is Payload.ContactRequest -> replaces
+            is Payload.ContactAccept -> replaces
+            is Payload.Profile -> replaces
+            is Payload.GroupInfo -> replaces
             is Payload.GroupUpdate -> replaces
             is Payload.SenderKey -> replaces
             is Payload.GroupJoin -> replaces
             is Payload.GroupDecline -> replaces
             is Payload.GroupLeave -> replaces
             Payload.Typing, is Payload.SessionReset, is Payload.ResetDone,
-            is Payload.Status, is Payload.StatusDelete,
+            is Payload.Status, is Payload.StatusDelete, is Payload.StatusSeen, is Payload.StatusLike,
             is Payload.CallOffer, is Payload.CallAnswer, is Payload.CallIce, is Payload.CallHangup,
             -> null
         }
@@ -809,13 +882,16 @@ class IncomingPipeline(
             is Payload.Timer -> copy(replaces = id)
             is Payload.Read -> copy(replaces = id)
             is Payload.ContactRequest -> copy(replaces = id)
+            is Payload.ContactAccept -> copy(replaces = id)
+            is Payload.Profile -> copy(replaces = id)
+            is Payload.GroupInfo -> copy(replaces = id)
             is Payload.GroupUpdate -> copy(replaces = id)
             is Payload.SenderKey -> copy(replaces = id)
             is Payload.GroupJoin -> copy(replaces = id)
             is Payload.GroupDecline -> copy(replaces = id)
             is Payload.GroupLeave -> copy(replaces = id)
             Payload.Typing, is Payload.SessionReset, is Payload.ResetDone,
-            is Payload.Status, is Payload.StatusDelete,
+            is Payload.Status, is Payload.StatusDelete, is Payload.StatusSeen, is Payload.StatusLike,
             is Payload.CallOffer, is Payload.CallAnswer, is Payload.CallIce, is Payload.CallHangup,
             -> this
         }

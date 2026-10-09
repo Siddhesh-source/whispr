@@ -63,7 +63,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
-enum class ProfileMessage { Saved, InvalidName, InvalidNickname, Unavailable, Network }
+enum class ProfileMessage { Saved, InvalidName, InvalidNickname, InvalidPhoto, Unavailable, Network }
 
 data class EditProfileUiState(
     val profile: MyProfile? = null,
@@ -93,7 +93,7 @@ class EditProfileViewModel @Inject constructor(private val profiles: ProfileRepo
     fun clearUsername() = run(ProfileMessage.InvalidNickname) { profiles.clearUsername() }
 
     fun setAvatar(uri: String?) {
-        if (uri != null) viewModelScope.launch { profiles.setAvatar(AvatarSource(uri)) }
+        if (uri != null) run(ProfileMessage.InvalidPhoto) { profiles.setAvatar(AvatarSource(uri)) }
     }
 
     private fun run(invalid: ProfileMessage, op: suspend () -> ProfileResult) {
@@ -264,6 +264,7 @@ fun EditProfileScreen(
                                 ProfileMessage.Saved -> R.string.profile_saved
                                 ProfileMessage.InvalidName -> R.string.profile_error_invalid_name
                                 ProfileMessage.InvalidNickname -> R.string.profile_error_invalid_nickname
+                                ProfileMessage.InvalidPhoto -> R.string.profile_error_invalid_photo
                                 ProfileMessage.Unavailable -> R.string.profile_error_unavailable
                                 ProfileMessage.Network -> R.string.profile_error_network
                             },

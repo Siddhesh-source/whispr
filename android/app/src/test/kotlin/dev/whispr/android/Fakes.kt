@@ -210,7 +210,9 @@ class FakeContacts : dev.whispr.domain.repository.ContactsRepository {
     override suspend fun addFromCode(code: String) = result.also { calls += "code:$code" }
     override suspend fun addByUsername(username: String) = result.also { calls += "username:$username" }
     override suspend fun addById(rawUserId: String) = result
-    override suspend fun acceptRequest(userId: UserId) = update(userId) { it.copy(isRequest = false) }.also {
+    override suspend fun acceptRequest(userId: UserId) = update(userId) {
+        it.copy(isRequest = false, awaitingAccept = false)
+    }.also {
         calls +=
             "accept"
     }
@@ -254,6 +256,9 @@ class FakeSettings : dev.whispr.domain.repository.SettingsRepository {
     }
     override suspend fun setUpdateChecks(enabled: Boolean) {
         privacy.value = privacy.value.copy(updateChecks = enabled)
+    }
+    override suspend fun setSaveFolder(uri: String?) {
+        privacy.value = privacy.value.copy(saveFolder = uri)
     }
 }
 

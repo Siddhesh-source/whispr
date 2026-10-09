@@ -83,6 +83,30 @@
     <string name="settings_copy_id">Copy account ID</string>
     <string name="settings_section_account">Account</string>
     <string name="settings_section_about">About</string>
+    <string name="settings_section_backup">Files and backup</string>
+    <string name="settings_save_folder">Save files to %1$s</string>
+    <string name="settings_save_folder_default">Downloads/Whispr</string>
+    <string name="settings_save_folder_reset">Save to Downloads/Whispr instead</string>
+    <string name="settings_backup">Chat backup</string>
+    <string name="settings_backup_body">Once a day, an encrypted copy of your chats goes to your save folder. It survives uninstalling Whispr, and only your recovery key opens it.</string>
+    <string name="settings_backup_now">Back up now</string>
+    <string name="settings_backup_working">Backing up…</string>
+    <string name="settings_backup_saved">Backed up to %1$s</string>
+    <string name="settings_backup_failed">Backup failed. Tap to try again.</string>
+    <string name="settings_backup_last">Last backup %1$s. Tap to back up now.</string>
+    <string name="settings_backup_show_key">Show recovery key</string>
+    <string name="settings_backup_key_title">Your recovery key</string>
+    <string name="settings_backup_key_body">Write this down somewhere safe. You need it to restore your chats after reinstalling. Whispr can\'t recover it for you.</string>
+    <string name="settings_backup_key_done">I wrote it down</string>
+    <string name="restore_action">Restore from a backup</string>
+    <string name="restore_working">Restoring your chats…</string>
+    <string name="restore_key_title">Enter your recovery key</string>
+    <string name="restore_key_body">The 64 characters shown when you turned on chat backup.</string>
+    <string name="restore_key_label">Recovery key</string>
+    <string name="restore_key_wrong">That key doesn\'t open this backup.</string>
+    <string name="restore_confirm">Restore</string>
+    <string name="restore_damaged_title">Can\'t restore this file</string>
+    <string name="restore_damaged_body">It isn\'t a Whispr backup, or it is incomplete or damaged. Pick another backup file.</string>
     <string name="settings_screen_security">Screen security</string>
     <string name="settings_screen_security_body">Block screenshots and screen recording, and hide Whispr\'s contents in the recent apps list.</string>
     <string name="settings_delete_account">Delete account</string>
@@ -124,6 +148,10 @@
     <string name="my_code_title">My code</string>
     <string name="my_code_description">Your Whispr contact code</string>
     <string name="my_code_hint">Let a contact scan this to add you. It contains your account ID and public key, nothing secret.</string>
+    <string name="my_code_share">Share my code</string>
+    <string name="my_code_share_hint">Anyone with your code can send you a request. Nothing reaches you until you accept.</string>
+    <string name="my_code_share_text">Connect with %1$s on Whispr, the private messenger without phone numbers: %2$s\nOr scan the attached code in Whispr (New chat → Scan).</string>
+    <string name="new_chat_paste_code">Paste a code or link</string>
     <string name="my_code_username">Username: %1$s</string>
 
     <!-- Verify -->
@@ -146,7 +174,14 @@
     <string name="chat_key_changed_title">Safety number changed</string>
     <string name="chat_key_changed_message">%1$s\'s safety number is different from before. They may have reinstalled, or someone may be intercepting. Sending is paused until you accept the new number; verify it in person when you can.</string>
     <string name="chat_key_changed_accept">Accept new number</string>
-    <string name="chat_request_message">%1$s wants to chat with you.</string>
+    <string name="chat_request_message">%1$s wants to connect. They can\'t message, call or see your status until you accept.</string>
+    <string name="chat_request_sent">Request sent. You can chat with %1$s once they accept.</string>
+    <string name="chat_open_profile">View profile</string>
+    <string name="chat_action_save">Save</string>
+    <string name="chat_saved_to">Saved to %1$s</string>
+    <string name="chat_save_needs_folder">Choose a folder for saved files in Settings first.</string>
+    <string name="chat_save_failed">Couldn\'t save the file. Check the save folder in Settings.</string>
+    <string name="chats_request_sent_preview">Request sent</string>
     <string name="chat_request_accept">Accept</string>
     <string name="chat_request_decline">Decline</string>
 
@@ -172,6 +207,16 @@
     <string name="profile_saved">Saved</string>
     <string name="profile_error_invalid_name">Names need 1 to 64 characters, without control characters.</string>
     <string name="profile_error_invalid_nickname">Nicknames are 3 to 32 letters, digits or _, starting with a letter.</string>
+    <string name="profile_error_invalid_photo">That picture couldn\'t be read. Try another one.</string>
+    <string name="profile_contact_title">Contact</string>
+    <string name="profile_contact_connected">Connected · end-to-end encrypted</string>
+    <string name="profile_contact_verified">Verified · end-to-end encrypted</string>
+    <string name="profile_contact_wants_to_connect">Wants to connect</string>
+    <string name="profile_contact_timer_on">Disappearing messages are on</string>
+    <plurals name="profile_media_count">
+        <item quantity="one">%d photo, voice message or file</item>
+        <item quantity="other">%d photos, voice messages and files</item>
+    </plurals>
     <string name="profile_error_unavailable">That nickname is busy. Try another.</string>
     <string name="profile_error_network">Couldn\'t reach the server. Check your connection and try again.</string>
 
@@ -191,8 +236,8 @@
     </plurals>
     <string name="chat_group_empty_message">Messages here are end-to-end encrypted for every member.</string>
     <string name="chat_invite_message">You\'re invited to %1$s. Nothing from the group reaches you until you accept.</string>
-    <string name="chat_group_removed">You\'re no longer in this group.</string>
-    <string name="chat_group_left">You left this group.</string>
+    <string name="chat_group_removed">You\'re no longer a participant in this group.</string>
+    <string name="chat_group_left">You\'re no longer a participant in this group.</string>
     <string name="chat_attach">Attach</string>
     <string name="chat_attach_camera">Camera</string>
     <string name="chat_attach_photo">Photo</string>
@@ -316,6 +361,14 @@
     <string name="status_from_gallery">Choose a photo</string>
     <string name="status_just_now">Just now</string>
     <string name="status_close">Close</string>
+    <string name="status_like">Like</string>
+    <string name="status_unlike">Unlike</string>
+    <string name="status_liked_by">Liked it</string>
+    <string name="status_views_none">No views yet. People who have read receipts off don\'t show up here.</string>
+    <plurals name="status_views">
+        <item quantity="one">%d view</item>
+        <item quantity="other">%d views</item>
+    </plurals>
     <string name="status_change_color">Change color</string>
     <string name="status_text_hint">Type a status</string>
     <string name="status_text_label">Status text</string>

@@ -6,10 +6,12 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.whispr.domain.model.SendResult
 import dev.whispr.domain.model.StatusFeed
 import dev.whispr.domain.model.StatusItem
+import dev.whispr.domain.model.StatusViewer
 import dev.whispr.domain.model.UserId
 import dev.whispr.domain.repository.ProfileRepository
 import dev.whispr.domain.repository.StatusRepository
 import javax.inject.Inject
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -24,6 +26,7 @@ data class StatusUiState(
     val loading: Boolean = true,
     val myName: String = "",
     val myId: UserId? = null,
+    val myAvatar: String? = null,
     val feed: StatusFeed = StatusFeed(),
     val error: StatusError? = null,
     /** Set once a post was accepted; the composer closes on it. */
@@ -46,6 +49,7 @@ class StatusViewModel @Inject constructor(private val statuses: StatusRepository
             loading = false,
             myName = me?.displayName.orEmpty(),
             myId = me?.userId,
+            myAvatar = me?.avatarPath,
             feed = feed,
             error = e,
             posted = done,
@@ -86,6 +90,12 @@ class StatusViewModel @Inject constructor(private val statuses: StatusRepository
     }
 
     suspend fun imageBytes(item: StatusItem): ByteArray? = statuses.imageBytes(item.author, item.id)
+
+    fun like(item: StatusItem) {
+        viewModelScope.launch { statuses.like(item.author, item.id, !item.liked) }
+    }
+
+    fun viewers(statusId: String): Flow<List<StatusViewer>> = statuses.observeViewers(statusId)
 
     fun report(e: StatusError) {
         error.value = e

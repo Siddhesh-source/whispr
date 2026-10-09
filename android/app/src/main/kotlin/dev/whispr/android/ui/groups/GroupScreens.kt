@@ -238,7 +238,8 @@ fun GroupInfoScreen(
                     val picture = remember(group.avatar) {
                         group.avatar?.let { BitmapFactory.decodeByteArray(it, 0, it.size)?.asImageBitmap() }
                     }
-                    GroupHeader(group.name, picture, group.isAdmin, onRename = { renaming = true }) {
+                    // Any member can rename the group or change its picture; admins manage members.
+                    GroupHeader(group.name, picture, group.canEditInfo, onRename = { renaming = true }) {
                         pick.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
                     }
                 }
@@ -320,7 +321,7 @@ fun GroupInfoScreen(
 private fun GroupHeader(
     name: String,
     picture: ImageBitmap?,
-    isAdmin: Boolean,
+    canEdit: Boolean,
     onRename: () -> Unit,
     onPicture: () -> Unit,
 ) {
@@ -336,7 +337,7 @@ private fun GroupHeader(
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        if (isAdmin) {
+        if (canEdit) {
             Row {
                 TextButton(onClick = onRename) { Text(stringResource(R.string.group_rename)) }
                 TextButton(onClick = onPicture) { Text(stringResource(R.string.group_picture_change)) }

@@ -168,7 +168,7 @@ class GroupMessagingTest {
     }
 
     @Test
-    fun renameAndPictureReachEveryoneAndNonAdminsCannotChangeTheGroup() = runBlocking {
+    fun renameAndPictureReachEveryoneAndNonAdminsCannotTakeOverTheGroup() = runBlocking {
         val g = createGroup()
         alice.preparer.files["content://pic"] =
             dev.whispr.data.media.PreparedMedia(ByteArray(500) { 7 }, "image/jpeg", null)
@@ -179,9 +179,10 @@ class GroupMessagingTest {
                 d.groups.observeGroup(g).first()!!.let { it.name == "Summit crew" && it.avatar?.size == 500 }
             }
         }
-        // Bob is a member, not an admin: refused locally...
-        assertEquals(GroupResult.NotAllowed, bob.groups.rename(g, "Bob's group"))
-        // ...and a hand-crafted update from him is ignored by everyone else.
+        // Bob is a member, not an admin: he may rename the group (anyone can)...
+        assertTrue(bob.groups.rename(g, "Bob's group") is GroupResult.Ok)
+        eventually("carol sees bob's name") { carol.groups.observeGroup(g).first()!!.name == "Bob's group" }
+        // ...but a hand-crafted update making him admin is ignored by everyone else.
         val forgery = UUID.randomUUID().toString()
         bob.engine.transaction {
             val state = dev.whispr.data.messaging.GroupState(
@@ -211,7 +212,9 @@ class GroupMessagingTest {
         }
         // Acknowledged means decrypted and processed (store-before-ack).
         eventually("carol processed bob's forgery") { "${carol.id}/$forgery" in relay.acked }
-        assertEquals("Summit crew", carol.groups.observeGroup(g).first()!!.name)
+        val seen = carol.groups.observeGroup(g).first()!!
+        assertEquals("Bob's group", seen.name)
+        assertEquals(dev.whispr.domain.model.GroupRole.Member, seen.members.single { it.userId.value == bob.id }.role)
     }
 
     @Test

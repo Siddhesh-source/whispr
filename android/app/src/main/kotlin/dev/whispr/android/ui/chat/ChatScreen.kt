@@ -77,9 +77,11 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.whispr.android.R
+import dev.whispr.android.files.PublicFiles
 import dev.whispr.android.ui.FilterObscuredTouches
 import dev.whispr.android.ui.formatDay
 import dev.whispr.android.ui.formatTime
+import dev.whispr.android.ui.rememberImageBytes
 import dev.whispr.core.designsystem.component.BubbleDirection
 import dev.whispr.core.designsystem.component.DeliveryStatus
 import dev.whispr.core.designsystem.component.EmptyState
@@ -93,6 +95,7 @@ import dev.whispr.core.designsystem.component.ReactionChip
 import dev.whispr.core.designsystem.component.RecordingBar
 import dev.whispr.core.designsystem.component.SystemNotice
 import dev.whispr.core.designsystem.component.WarningCard
+import dev.whispr.core.designsystem.component.WhisprAvatar
 import dev.whispr.core.designsystem.component.WhisprPrimaryButton
 import dev.whispr.core.designsystem.component.WhisprTopBar
 import dev.whispr.core.designsystem.icon.WhisprIcons
@@ -124,6 +127,9 @@ interface AttachmentActions {
     suspend fun bytes(messageId: String): ByteArray?
     suspend fun export(messageId: String): String?
 
+    /** The folder picked in Settings for saved files (null: Downloads/Whispr). */
+    suspend fun saveFolder(): String? = null
+
     companion object {
         val None = object : AttachmentActions {
             override fun download(messageId: String) = Unit
@@ -140,6 +146,7 @@ fun ChatRoute(
     onGroupInfo: () -> Unit = {},
     /** 1:1 chats: start a voice (false) or video (true) call. */
     onCall: (video: Boolean) -> Unit = {},
+    onProfile: () -> Unit = {},
     viewModel: ChatViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -156,6 +163,7 @@ fun ChatRoute(
             override fun download(messageId: String) = viewModel.download(messageId)
             override suspend fun bytes(messageId: String) = viewModel.attachmentBytes(messageId)
             override suspend fun export(messageId: String) = viewModel.exportAttachment(messageId)
+            override suspend fun saveFolder() = viewModel.saveFolder()
         }
     }
     ChatScreen(
@@ -174,6 +182,7 @@ fun ChatRoute(
         onError = viewModel::reportError,
         onGroupInfo = onGroupInfo,
         onCall = onCall,
+        onProfile = onProfile,
         onAcceptInvite = viewModel::acceptInvite,
         onDeclineInvite = { viewModel.declineInvite(onBack) },
         attachments = actions,
@@ -219,6 +228,7 @@ fun ChatScreen(
     onError: (ChatError) -> Unit = {},
     onGroupInfo: () -> Unit = {},
     onCall: (video: Boolean) -> Unit = {},
+    onProfile: () -> Unit = {},
     onAcceptInvite: () -> Unit = {},
     onDeclineInvite: () -> Unit = {},
     attachments: AttachmentActions = AttachmentActions.None,
@@ -228,12 +238,28 @@ fun ChatScreen(
     var actingOn by remember { mutableStateOf<Message?>(null) }
     var forwarding by remember { mutableStateOf<Message?>(null) }
     var deleting by remember { mutableStateOf<Pair<Message, DeleteKind>?>(null) }
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     Scaffold(
         containerColor = MaterialTheme.colorScheme.surface,
         topBar = {
+            val picture by rememberImageBytes(state.avatar)
             WhisprTopBar(
                 title = state.peerName,
                 onNavigateBack = onBack,
+                leading = if (state.content is ChatContent.Missing) {
+                    null
+                } else {
+                    { WhisprAvatar(state.peerName, image = picture, size = WhisprTheme.sizes.avatarSmall) }
+                },
+                onTitleClick = when {
+                    state.content is ChatContent.Missing -> null
+                    state.isGroup -> onGroupInfo
+                    else -> onProfile
+                },
+                titleClickLabel = stringResource(
+                    if (state.isGroup) R.string.chat_group_info else R.string.chat_open_profile,
+                ),
                 subtitle = when {
                     state.peerTyping -> stringResource(R.string.chat_typing)
                     state.isGroup && state.memberCount > 0 -> pluralStringResource(
@@ -317,6 +343,7 @@ fun ChatScreen(
                         onAccept,
                         onDecline,
                     )
+                    state.awaitingAccept -> ClosedBar(stringResource(R.string.chat_request_sent, state.peerName))
                     state.groupStatus == GroupStatus.Invited -> RequestBar(
                         stringResource(R.string.chat_invite_message, state.peerName),
                         onAcceptInvite,
@@ -351,6 +378,7 @@ fun ChatScreen(
             onReply = { messageActions.onReply(m) },
             onForward = { forwarding = m },
             onDelete = { kind -> deleting = m to kind },
+            onSave = { saveAttachment(context, scope, attachments, m) },
         )
     }
     forwarding?.let { m ->
@@ -917,6 +945,7 @@ private fun ActionSheet(
     onReply: () -> Unit,
     onForward: () -> Unit,
     onDelete: (DeleteKind) -> Unit,
+    onSave: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val content = MessageRules.isContent(message)
@@ -942,11 +971,42 @@ private fun ActionSheet(
                 action(R.string.chat_action_copy, WhisprIcons.Copy) { copySensitive(context, message.text) }
             }
             if (content) action(R.string.chat_action_forward, WhisprIcons.Forward, onForward)
+            if (content && message.attachment?.state == AttachmentState.Ready) {
+                action(R.string.chat_action_save, WhisprIcons.Download, onSave)
+            }
             action(R.string.chat_action_delete_me, WhisprIcons.Delete) { onDelete(DeleteKind.ForMe) }
             if (canDeleteForEveryone) {
                 action(R.string.chat_action_delete_everyone, WhisprIcons.Delete) { onDelete(DeleteKind.ForEveryone) }
             }
         }
+    }
+}
+
+/** Saves [m]'s attachment where the user keeps files, and says where (or why not). */
+internal fun saveAttachment(
+    context: android.content.Context,
+    scope: kotlinx.coroutines.CoroutineScope,
+    actions: AttachmentActions,
+    m: Message,
+) {
+    val a = m.attachment ?: return
+    scope.launch {
+        val path = actions.export(m.id)
+        val folder = actions.saveFolder()
+        val result = if (path == null) {
+            PublicFiles.Result.Failed
+        } else {
+            val file = java.io.File(path)
+            withContext(Dispatchers.IO) {
+                PublicFiles.save(context, file, file.name, a.contentType, folder).also { file.delete() }
+            }
+        }
+        val text = when (result) {
+            is PublicFiles.Result.Saved -> context.getString(R.string.chat_saved_to, result.where)
+            PublicFiles.Result.NeedsFolder -> context.getString(R.string.chat_save_needs_folder)
+            PublicFiles.Result.Failed -> context.getString(R.string.chat_save_failed)
+        }
+        android.widget.Toast.makeText(context, text, android.widget.Toast.LENGTH_LONG).show()
     }
 }
 

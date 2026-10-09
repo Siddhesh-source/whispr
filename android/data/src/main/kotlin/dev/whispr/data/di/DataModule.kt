@@ -14,6 +14,8 @@ import dev.whispr.data.account.asImporter
 import dev.whispr.data.auth.DeviceWipe
 import dev.whispr.data.auth.SessionAuthRepository
 import dev.whispr.data.auth.TokenSource
+import dev.whispr.data.backup.BackupPaths
+import dev.whispr.data.backup.ChatBackup
 import dev.whispr.data.calls.RoomCallLogRepository
 import dev.whispr.data.calls.RoomCallSignalingRepository
 import dev.whispr.data.connectivity.AndroidConnectivityRepository
@@ -32,6 +34,7 @@ import dev.whispr.data.media.AndroidMediaPreparer
 import dev.whispr.data.media.MediaFiles
 import dev.whispr.data.media.MediaPreparer
 import dev.whispr.data.media.MediaService
+import dev.whispr.data.messaging.ContactLink
 import dev.whispr.data.messaging.MessagingEngine
 import dev.whispr.data.messaging.RoomGroupsRepository
 import dev.whispr.data.messaging.RoomMessagingRepository
@@ -266,16 +269,31 @@ object DataModule {
         identity,
         allowInsecureLoopback,
         onKeyAcknowledged = engine::onKeyChangeAcknowledged,
+        transaction = { block -> engine.transaction(block) },
     )
 
     @Provides @Singleton
-    fun profileRepository(@ApplicationContext context: Context, db: WhisprDatabase, api: WhisprApi): ProfileRepository =
-        RoomProfileRepository(
-            db.accountDao(),
-            api,
-            AvatarStore(context.contentResolver, File(context.noBackupFilesDir, "avatar")).asImporter(),
-            Dispatchers.IO,
-        )
+    fun profileRepository(
+        @ApplicationContext context: Context,
+        db: WhisprDatabase,
+        api: WhisprApi,
+        engine: MessagingEngine,
+    ): ProfileRepository = RoomProfileRepository(
+        db.accountDao(),
+        api,
+        AvatarStore(context.contentResolver, File(context.noBackupFilesDir, "avatar")).asImporter(),
+        Dispatchers.IO,
+        onChanged = { engine.transaction { ContactLink.broadcastProfile(db.cryptoDao(), System::currentTimeMillis) } },
+    )
+
+    @Provides @Singleton
+    fun chatBackup(
+        @ApplicationContext context: Context,
+        db: WhisprDatabase,
+        @IdentityStore identity: SecretFileStore,
+        @DatabaseKeyStore databaseKey: SecretFileStore,
+        engine: MessagingEngine,
+    ) = ChatBackup(db, identity, databaseKey, BackupPaths.of(context), quiet = { block -> engine.transaction(block) })
 
     @Provides @Singleton
     fun roomStatusRepository(

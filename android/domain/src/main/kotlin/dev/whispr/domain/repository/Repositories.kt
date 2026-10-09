@@ -115,7 +115,8 @@ interface ProfileRepository {
 
     suspend fun setDisplayName(name: String): ProfileResult
 
-    suspend fun setAvatar(avatar: AvatarSource?)
+    /** InvalidInput if the image can't be read. */
+    suspend fun setAvatar(avatar: AvatarSource?): ProfileResult
 
     /** Claims nickname plus a server-assigned number, e.g. "sam" -> "sam.42". */
     suspend fun claimUsername(nickname: String): ProfileResult
@@ -249,6 +250,9 @@ interface SettingsRepository {
     suspend fun setRelayCalls(enabled: Boolean)
 
     suspend fun setUpdateChecks(enabled: Boolean)
+
+    /** [uri] null: back to Downloads/Whispr. */
+    suspend fun setSaveFolder(uri: String?)
 }
 
 interface EncryptionRepository {

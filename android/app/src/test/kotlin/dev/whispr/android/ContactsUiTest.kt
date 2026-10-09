@@ -17,6 +17,8 @@ import dev.whispr.android.ui.contacts.AddContactError
 import dev.whispr.android.ui.contacts.AddContactScreen
 import dev.whispr.android.ui.contacts.AddContactUiState
 import dev.whispr.android.ui.contacts.AddContactViewModel
+import dev.whispr.android.ui.profile.ContactProfileScreen
+import dev.whispr.android.ui.profile.ContactProfileUiState
 import dev.whispr.android.ui.profile.EditProfileViewModel
 import dev.whispr.android.ui.profile.ProfileMessage
 import dev.whispr.android.ui.scan.ScanContactViewModel
@@ -141,7 +143,7 @@ class ContactsUiTest {
                 profile.value =
                     profile.value!!.copy(displayName = name)
             }
-            override suspend fun setAvatar(avatar: AvatarSource?) = Unit
+            override suspend fun setAvatar(avatar: AvatarSource?) = dev.whispr.domain.model.ProfileResult.Ok
             override suspend fun claimUsername(nickname: String) = claimResult
             override suspend fun clearUsername() = ProfileResult.Ok
         }
@@ -202,7 +204,7 @@ class ContactsUiTest {
                 )
             }
         }
-        rule.onNodeWithText("Bob wants to chat with you.").assertIsDisplayed()
+        rule.onNodeWithText("Bob wants to connect.", substring = true).assertIsDisplayed()
         rule.onNodeWithText("Decline").assertIsDisplayed()
         rule.onNodeWithText("Accept").performClick()
         assertEquals(1, accepted)
@@ -248,5 +250,59 @@ class ContactsUiTest {
         rule.onNodeWithText("Show my code").assertIsDisplayed()
         rule.onNodeWithText("Scan QR code").performClick()
         assertEquals(1, scans)
+    }
+
+    @Test
+    fun aSentRequestBlocksWritingUntilAccepted() {
+        rule.setContent {
+            WhisprTheme {
+                ChatScreen(
+                    ChatUiState(peerName = "Bob", content = ChatContent.Messages(emptyList()), awaitingAccept = true),
+                    onBack = {},
+                    onInput = {},
+                    onSend = {},
+                    onRetry = {},
+                )
+            }
+        }
+        rule.onNodeWithText("Request sent. You can chat with Bob once they accept.").assertIsDisplayed()
+        rule.onNodeWithContentDescription("Send message").assertDoesNotExist()
+        rule.onNodeWithContentDescription("Voice call").assertDoesNotExist()
+    }
+
+    @Test
+    fun contactProfileListsMediaWithSave() {
+        val photo = dev.whispr.domain.model.Message(
+            "m1",
+            dev.whispr.domain.model.ConversationId("c"),
+            false,
+            "",
+            java.time.Instant.now(),
+            null,
+            attachment = dev.whispr.domain.model.Attachment(
+                kind = dev.whispr.domain.model.AttachmentKind.File,
+                contentType = "application/pdf",
+                fileName = "tickets.pdf",
+                size = 2048,
+                state = dev.whispr.domain.model.AttachmentState.Ready,
+            ),
+        )
+        rule.setContent {
+            WhisprTheme {
+                ContactProfileScreen(
+                    ContactProfileUiState(
+                        loading = false,
+                        contact = Contact(UserId("b"), "Bob", ByteArray(33)),
+                        media = listOf(photo),
+                    ),
+                    onBack = {},
+                    onVerify = {},
+                )
+            }
+        }
+        rule.onNodeWithText("Bob").assertIsDisplayed()
+        rule.onNodeWithText("Connected · end-to-end encrypted").assertIsDisplayed()
+        rule.onNodeWithText("tickets.pdf").assertIsDisplayed()
+        rule.onNodeWithText("Save").assertIsDisplayed()
     }
 }

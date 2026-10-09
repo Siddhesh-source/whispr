@@ -22,6 +22,7 @@ import dev.whispr.domain.repository.ConnectivityRepository
 import dev.whispr.domain.repository.ContactsRepository
 import dev.whispr.domain.repository.GroupsRepository
 import dev.whispr.domain.repository.MessagingRepository
+import dev.whispr.domain.repository.SettingsRepository
 import java.time.Duration
 import java.time.Instant
 import java.time.ZoneId
@@ -32,6 +33,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
@@ -68,6 +70,10 @@ data class ChatUiState(
     val trust: TrustState = TrustState.Unverified,
     /** They added us and we have not accepted yet. */
     val isRequest: Boolean = false,
+    /** We asked to connect and they have not accepted yet. */
+    val awaitingAccept: Boolean = false,
+    /** Their profile photo, or the group's picture. */
+    val avatar: ByteArray? = null,
     val isGroup: Boolean = false,
     /** Groups only. */
     val groupStatus: GroupStatus? = null,
@@ -80,7 +86,11 @@ data class ChatUiState(
 ) {
     /** Sending is only possible for accepted contacts with no unacknowledged key change, or active groups. */
     val canCompose: Boolean
-        get() = if (isGroup) groupStatus == GroupStatus.Active else !isRequest && trust != TrustState.KeyChanged
+        get() = if (isGroup) {
+            groupStatus == GroupStatus.Active
+        } else {
+            !isRequest && !awaitingAccept && trust != TrustState.KeyChanged
+        }
 }
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -93,6 +103,7 @@ class ChatViewModel @Inject constructor(
     private val messaging: MessagingRepository,
     private val groups: GroupsRepository,
     private val active: ActiveConversation,
+    private val settings: SettingsRepository,
 ) : ViewModel() {
 
     private val peer = savedState.get<String>("peerId")?.takeIf { it.isNotEmpty() }?.let(::UserId)
@@ -113,6 +124,8 @@ class ChatViewModel @Inject constructor(
         val isRequest: Boolean,
         val groupStatus: GroupStatus?,
         val members: Int,
+        val awaitingAccept: Boolean = false,
+        val avatar: ByteArray? = null,
     )
 
     private val header = if (groupId != null) {
@@ -124,6 +137,7 @@ class ChatViewModel @Inject constructor(
                 false,
                 g?.status,
                 g?.members?.count { !it.invited } ?: 0,
+                avatar = g?.avatar,
             )
         }
     } else {
@@ -136,6 +150,8 @@ class ChatViewModel @Inject constructor(
                 c?.isRequest == true,
                 null,
                 0,
+                awaitingAccept = c?.awaitingAccept == true,
+                avatar = c?.avatar,
             )
         }
     }
@@ -151,7 +167,7 @@ class ChatViewModel @Inject constructor(
     ) { all, current ->
         all.filter { c ->
             val writable = c.group?.let { it.status == GroupStatus.Active }
-                ?: c.peer?.let { !it.isRequest && it.trust != TrustState.KeyChanged }
+                ?: c.peer?.let { it.connected && it.trust != TrustState.KeyChanged }
                 ?: false
             c.id != current && writable
         }
@@ -172,6 +188,8 @@ class ChatViewModel @Inject constructor(
             input = text,
             trust = h.trust,
             isRequest = h.isRequest,
+            awaitingAccept = h.awaitingAccept,
+            avatar = h.avatar,
             isGroup = groupId != null,
             groupStatus = h.groupStatus,
             memberCount = h.members,
@@ -291,6 +309,9 @@ class ChatViewModel @Inject constructor(
 
     suspend fun exportAttachment(messageId: String): String? =
         conversation.value?.let { messaging.exportAttachment(it, messageId) }
+
+    /** The folder picked in Settings for saved files, or null for Downloads/Whispr. */
+    suspend fun saveFolder(): String? = settings.observePrivacy().first().saveFolder
 
     fun acceptRequest() {
         peer?.let { viewModelScope.launch { contacts.acceptRequest(it) } }

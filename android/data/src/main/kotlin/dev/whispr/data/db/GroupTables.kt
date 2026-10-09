@@ -35,6 +35,8 @@ data class GroupEntity(
     /** JSON map userId -> revision at which they were removed (removal tombstones). */
     @ColumnInfo(defaultValue = "{}") val removed: String = "{}",
     val createdAt: Long,
+    /** When the name or picture last changed (any member may change them; the newest wins). */
+    @ColumnInfo(defaultValue = "0") val infoTs: Long = 0,
 )
 
 @Entity(tableName = "group_members", primaryKeys = ["groupId", "userId"])
@@ -270,7 +272,6 @@ interface GroupQueries {
         FROM groups g
         LEFT JOIN messages m ON m.localOrder =
             (SELECT MAX(localOrder) FROM messages x WHERE x.conversationId = g.groupId)
-        WHERE g.status != 'Left'
         """,
     )
     fun observeGroupRows(): Flow<List<GroupRow>>

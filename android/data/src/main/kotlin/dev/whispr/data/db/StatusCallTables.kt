@@ -1,5 +1,6 @@
 package dev.whispr.data.db
 
+import androidx.room.ColumnInfo
 import androidx.room.Dao
 import androidx.room.Entity
 import androidx.room.Index
@@ -41,6 +42,17 @@ data class StatusEntity(
     val blobPath: String? = null,
     /** AttachmentState name, for photo statuses. */
     val mediaState: String? = null,
+    /** We liked this (someone else's) status. */
+    @ColumnInfo(defaultValue = "0") val liked: Boolean = false,
+)
+
+/** Who viewed (and liked) one of our own statuses. */
+@Entity(tableName = "status_views", primaryKeys = ["statusId", "viewerId"])
+data class StatusViewEntity(
+    val statusId: String,
+    val viewerId: String,
+    val viewedAt: Long,
+    @ColumnInfo(defaultValue = "0") val liked: Boolean = false,
 )
 
 /** One call in the local log. Never sent anywhere. */
@@ -58,6 +70,8 @@ data class CallEntity(
 )
 
 /** A status row with its author's display name, for the feed. */
+data class StatusViewRow(val viewerId: String, val viewedAt: Long, val liked: Boolean, val viewerName: String?)
+
 data class StatusRow(
     val authorId: String,
     val statusId: String,
@@ -75,6 +89,10 @@ data class StatusRow(
     val thumbnail: ByteArray?,
     val mediaState: String?,
     val authorName: String?,
+    val authorAvatar: ByteArray? = null,
+    val liked: Boolean = false,
+    val views: Int = 0,
+    val likes: Int = 0,
 )
 
 @Dao
@@ -82,7 +100,9 @@ interface StatusDao {
     @Query(
         """SELECT s.authorId, s.statusId, s.kind, s.body, s.background, s.createdAt, s.expireAt, s.viewed,
                   s.sendState, s.size, s.contentType, s.width, s.height, s.thumbnail, s.mediaState,
-                  c.displayName AS authorName
+                  c.displayName AS authorName, c.avatar AS authorAvatar, s.liked,
+                  (SELECT COUNT(*) FROM status_views v WHERE v.statusId = s.statusId) AS views,
+                  (SELECT COUNT(*) FROM status_views v WHERE v.statusId = s.statusId AND v.liked = 1) AS likes
              FROM statuses s LEFT JOIN contacts c ON c.userId = s.authorId
             WHERE s.expireAt > :now
             ORDER BY s.createdAt""",
@@ -122,6 +142,26 @@ interface StatusDao {
     @Query("DELETE FROM statuses WHERE expireAt <= :now")
     fun deleteExpired(now: Long)
 
+    @Query("DELETE FROM status_views WHERE statusId NOT IN (SELECT statusId FROM statuses)")
+    fun pruneViews()
+
+    @Query("SELECT * FROM status_views WHERE statusId = :statusId AND viewerId = :viewerId")
+    fun view(statusId: String, viewerId: String): StatusViewEntity?
+
+    @Upsert
+    fun putView(view: StatusViewEntity)
+
+    /** Who viewed our status, newest first. */
+    @Query(
+        """SELECT v.viewerId, v.viewedAt, v.liked, c.displayName AS viewerName
+             FROM status_views v LEFT JOIN contacts c ON c.userId = v.viewerId
+            WHERE v.statusId = :statusId ORDER BY v.viewedAt DESC""",
+    )
+    fun observeViews(statusId: String): Flow<List<StatusViewRow>>
+
+    @Query("UPDATE statuses SET liked = :liked WHERE authorId = :author AND statusId = :id")
+    fun setLiked(author: String, id: String, liked: Boolean)
+
     /** Our photo statuses whose upload has not finished (resumed on start). */
     @Query("SELECT * FROM statuses WHERE authorId = :me AND sendState = 'Sending' AND kind = 'image'")
     fun pendingUploads(me: String): List<StatusEntity>
@@ -129,7 +169,8 @@ interface StatusDao {
     /** Everyone a status goes to: accepted, visible contacts whose key we still trust. */
     @Query(
         """SELECT userId FROM contacts
-            WHERE isRequest = 0 AND hidden = 0 AND trust != 'KeyChanged' AND length(identityKey) > 0
+            WHERE isRequest = 0 AND hidden = 0 AND awaitingAccept = 0 AND trust != 'KeyChanged'
+              AND length(identityKey) > 0
               AND userId != :me""",
     )
     fun audience(me: String): List<String>

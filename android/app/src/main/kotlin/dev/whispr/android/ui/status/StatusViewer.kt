@@ -19,10 +19,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -40,8 +42,10 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -49,12 +53,15 @@ import androidx.compose.ui.unit.Dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.whispr.android.R
+import dev.whispr.android.ui.rememberAvatarBitmap
+import dev.whispr.android.ui.rememberImageBytes
 import dev.whispr.core.designsystem.component.WhisprAvatar
 import dev.whispr.core.designsystem.icon.WhisprIcons
 import dev.whispr.core.designsystem.theme.WhisprTheme
 import dev.whispr.domain.model.StatusItem
 import dev.whispr.domain.model.StatusKind
 import dev.whispr.domain.model.StatusSendState
+import dev.whispr.domain.model.StatusViewer
 import dev.whispr.domain.model.UserId
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -87,6 +94,12 @@ fun StatusViewerRoute(author: UserId, onClose: () -> Unit, viewModel: StatusView
     }
     val shown = index.coerceIn(0, items.lastIndex)
     var confirmDelete by remember { mutableStateOf<StatusItem?>(null) }
+    var viewersOf by remember { mutableStateOf<StatusItem?>(null) }
+    val avatar = if (mine) {
+        rememberAvatarBitmap(state.myAvatar).value
+    } else {
+        rememberImageBytes((state.feed.recent + state.feed.viewed).firstOrNull { it.author == author }?.avatar).value
+    }
     StatusViewer(
         name = name,
         items = items,
@@ -97,7 +110,15 @@ fun StatusViewerRoute(author: UserId, onClose: () -> Unit, viewModel: StatusView
         loadImage = viewModel::imageBytes,
         onDelete = if (mine) ({ confirmDelete = it }) else null,
         onRetry = if (mine) viewModel::retry else null,
+        onLike = if (mine) null else viewModel::like,
+        onViews = if (mine) ({ viewersOf = it }) else null,
+        held = viewersOf != null,
+        avatar = avatar,
     )
+    viewersOf?.let { item ->
+        val viewers by remember(item.id) { viewModel.viewers(item.id) }.collectAsStateWithLifecycle(emptyList())
+        ViewersSheet(viewers, onDismiss = { viewersOf = null })
+    }
     confirmDelete?.let { item ->
         AlertDialog(
             onDismissRequest = { confirmDelete = null },
@@ -127,6 +148,13 @@ fun StatusViewer(
     loadImage: suspend (StatusItem) -> ByteArray?,
     onDelete: ((StatusItem) -> Unit)? = null,
     onRetry: ((StatusItem) -> Unit)? = null,
+    /** Someone else's status: like or unlike it. */
+    onLike: ((StatusItem) -> Unit)? = null,
+    /** Our own status: show who viewed it. */
+    onViews: ((StatusItem) -> Unit)? = null,
+    /** Paused from outside (e.g. the viewers sheet is open). */
+    held: Boolean = false,
+    avatar: ImageBitmap? = null,
 ) {
     val item = items[index]
     val colors = WhisprTheme.colors
@@ -146,8 +174,8 @@ fun StatusViewer(
     }
     val ready = item.kind == StatusKind.Text || image != null
     LaunchedEffect(item.id, ready) { if (ready) onSeen(item) }
-    LaunchedEffect(item.id, paused, ready) {
-        if (!ready || paused) return@LaunchedEffect
+    LaunchedEffect(item.id, paused, ready, held) {
+        if (!ready || paused || held) return@LaunchedEffect
         val remaining = ((1f - progress.value) * ITEM_MS).toInt()
         progress.animateTo(1f, tween(remaining, easing = LinearEasing))
         onIndex(index + 1)
@@ -223,7 +251,7 @@ fun StatusViewer(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(WhisprTheme.spacing.sm),
             ) {
-                WhisprAvatar(name, size = WhisprTheme.sizes.avatarSmall)
+                WhisprAvatar(name, image = avatar, size = WhisprTheme.sizes.avatarSmall)
                 Column(Modifier.weight(1f)) {
                     Text(
                         name,
@@ -245,6 +273,31 @@ fun StatusViewer(
                 if (onRetry != null && item.sendState == StatusSendState.Failed) {
                     TextButton(onClick = { onRetry(item) }) { Text(stringResource(R.string.status_retry), color = on) }
                 }
+                if (onViews != null && item.sendState == StatusSendState.Sent) {
+                    val label = pluralStringResource(R.plurals.status_views, item.views, item.views)
+                    TextButton(
+                        onClick = { onViews(item) },
+                        modifier = Modifier.semantics { contentDescription = label },
+                    ) {
+                        Icon(WhisprIcons.Views, contentDescription = null, tint = on)
+                        Text(
+                            " ${item.views}",
+                            color = on,
+                            style = MaterialTheme.typography.labelLarge,
+                        )
+                    }
+                }
+                if (onLike != null) {
+                    IconButton(onClick = { onLike(item) }) {
+                        Icon(
+                            if (item.liked) WhisprIcons.Liked else WhisprIcons.Like,
+                            contentDescription = stringResource(
+                                if (item.liked) R.string.status_unlike else R.string.status_like,
+                            ),
+                            tint = if (item.liked) colors.danger else on,
+                        )
+                    }
+                }
                 if (onDelete != null) {
                     IconButton(onClick = { onDelete(item) }) {
                         Icon(WhisprIcons.Delete, contentDescription = stringResource(R.string.status_delete), tint = on)
@@ -252,6 +305,55 @@ fun StatusViewer(
                 }
                 IconButton(onClick = onClose) {
                     Icon(WhisprIcons.Close, contentDescription = stringResource(R.string.status_close), tint = on)
+                }
+            }
+        }
+    }
+}
+
+/** Who viewed our status, and who liked it. Views need the viewer's read receipts on. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ViewersSheet(viewers: List<StatusViewer>, onDismiss: () -> Unit) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(Modifier.navigationBarsPadding().padding(bottom = WhisprTheme.spacing.lg)) {
+            Text(
+                pluralStringResource(R.plurals.status_views, viewers.size, viewers.size),
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.padding(horizontal = WhisprTheme.spacing.lg, vertical = WhisprTheme.spacing.sm)
+                    .semantics { heading() },
+            )
+            if (viewers.isEmpty()) {
+                Text(
+                    stringResource(R.string.status_views_none),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = WhisprTheme.spacing.lg),
+                )
+            }
+            viewers.forEach { v ->
+                Row(
+                    Modifier.fillMaxWidth()
+                        .padding(horizontal = WhisprTheme.spacing.lg, vertical = WhisprTheme.spacing.sm),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(WhisprTheme.spacing.md),
+                ) {
+                    WhisprAvatar(v.name, size = WhisprTheme.sizes.avatarSmall)
+                    Column(Modifier.weight(1f)) {
+                        Text(v.name, style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            relativeTime(v.viewedAt),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    if (v.liked) {
+                        Icon(
+                            WhisprIcons.Liked,
+                            contentDescription = stringResource(R.string.status_liked_by),
+                            tint = WhisprTheme.colors.danger,
+                        )
+                    }
                 }
             }
         }

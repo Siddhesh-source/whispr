@@ -31,6 +31,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.whispr.android.R
+import dev.whispr.android.ui.rememberAvatarBitmap
+import dev.whispr.android.ui.rememberImageBytes
 import dev.whispr.core.designsystem.component.ListDivider
 import dev.whispr.core.designsystem.component.LoadingState
 import dev.whispr.core.designsystem.component.StatusAvatar
@@ -156,9 +158,11 @@ private fun MyStatusRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(WhisprTheme.spacing.md - WhisprTheme.spacing.xs),
     ) {
+        val picture by rememberAvatarBitmap(state.myAvatar)
         StatusAvatar(
             name = state.myName,
             ring = if (mine.isEmpty()) null else StatusRing.Seen,
+            image = picture,
             add = mine.isEmpty(),
         )
         Column(Modifier.weight(1f)) {
@@ -203,7 +207,8 @@ private fun AuthorRow(author: StatusAuthor, ring: StatusRing, onClick: () -> Uni
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(WhisprTheme.spacing.md - WhisprTheme.spacing.xs),
     ) {
-        StatusAvatar(name = author.name, ring = ring)
+        val picture by rememberImageBytes(author.avatar)
+        StatusAvatar(name = author.name, ring = ring, image = picture)
         Column(Modifier.weight(1f)) {
             Text(
                 author.name,

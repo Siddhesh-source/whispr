@@ -71,8 +71,9 @@ class SignalStore(private val dao: CryptoDao, private val clock: () -> Long = Sy
         val contact = dao.contact(address.name)
         return when {
             contact == null -> {
-                // A stranger's first message: they become a request with this key pinned.
-                dao.putContact(ContactEntity(address.name, UNKNOWN_CONTACT, key, clock(), isRequest = true))
+                // A stranger's first message: key pinned, but not listed. Only their
+                // contact request (accounts are private) makes them a visible request.
+                dao.putContact(ContactEntity(address.name, UNKNOWN_CONTACT, key, clock(), hidden = true))
                 IdentityChange.NEW_OR_UNCHANGED
             }
             contact.identityKey.isEmpty() -> {

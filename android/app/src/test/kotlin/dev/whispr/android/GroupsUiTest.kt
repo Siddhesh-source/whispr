@@ -125,6 +125,7 @@ class GroupsUiTest {
         messaging,
         groups,
         ActiveConversation(),
+        FakeSettings(),
     )
 
     // ---- ViewModels ----
@@ -300,7 +301,7 @@ class GroupsUiTest {
     @Test
     fun removedOrInvitedGroupsCannotBeWrittenTo() {
         chat(groupState(msg("m1"), status = GroupStatus.Removed))
-        rule.onNodeWithText("You're no longer in this group.").assertIsDisplayed()
+        rule.onNodeWithText("You're no longer a participant in this group.").assertIsDisplayed()
         rule.onNodeWithContentDescription("Send message").assertDoesNotExist()
     }
 
@@ -422,13 +423,14 @@ class GroupsUiTest {
     }
 
     @Test
-    fun membersSeeNoAdminControls() {
+    fun membersCanRenameButNotManageMembers() {
         rule.setContent {
             WhisprTheme { GroupInfoScreen(GroupInfoUiState(groupOf(admin = false), loading = false), onBack = {}) }
         }
-        rule.onNodeWithText("Rename").assertDoesNotExist()
+        rule.onNodeWithText("Rename").assertIsDisplayed()
         rule.onNodeWithText("Add members").assertDoesNotExist()
         rule.onNodeWithContentDescription("Manage Sam").assertDoesNotExist()
+        rule.onNode(hasScrollAction()).performScrollToNode(hasText("Admin"))
         rule.onNodeWithText("Admin").assertIsDisplayed()
     }
 

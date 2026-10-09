@@ -204,6 +204,7 @@ class MessagingEngineTest {
 
     @Test
     fun readStatusHiddenWhenOwnReadReceiptsAreOff() = runBlocking {
+        RoomSettingsRepository(db.settingDao()).setReadReceipts(false)
         repo.sendText(peer, "hello")
         eventually("sent") { messages().single().status == MessageStatus.Sent }
         val id = messages().single().id
@@ -253,6 +254,7 @@ class MessagingEngineTest {
 
     @Test
     fun readReceiptsOnlySentWhenEnabled() = runBlocking {
+        RoomSettingsRepository(db.settingDao()).setReadReceipts(false)
         eventually("connected") { gateway.current != null }
         gateway.push(gateway.envelope(peer.value, """{"t":"text","body":"one"}"""))
         eventually("stored") { messages().size == 1 }

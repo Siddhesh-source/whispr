@@ -146,9 +146,10 @@ class ViewModelsTest {
             assertEquals(ConnectionStatus.Active, content.connection)
             connectivity.online.value = false
             assertEquals(ConnectionStatus.Offline, (awaitItem() as SettingsUiState.Content).connection)
-            assertFalse("privacy toggles default off", content.readReceipts || content.typingIndicators)
-            vm.setReadReceipts(true)
-            assertTrue((awaitItem() as SettingsUiState.Content).readReceipts)
+            assertTrue("read receipts default on", content.readReceipts)
+            assertFalse("typing indicators default off", content.typingIndicators)
+            vm.setReadReceipts(false)
+            assertFalse((awaitItem() as SettingsUiState.Content).readReceipts)
             encryption.registered.value = false
             assertFalse((awaitItem() as SettingsUiState.Content).keysRegistered)
         }

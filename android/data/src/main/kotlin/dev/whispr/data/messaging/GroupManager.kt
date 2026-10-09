@@ -88,16 +88,54 @@ class GroupManager(
     suspend fun rename(self: Self, id: String, name: String): GroupResult {
         val clean = name.trim()
         if (!validName(clean)) return GroupResult.Invalid
-        return adminOp(self, id) { g, members, removed ->
-            Change(g.copy(name = clean), members, removed, note = "You renamed the group to \"$clean\"")
-        }
+        return changeInfo(self, id, "You renamed the group to \"$clean\"") { it.copy(name = clean) }
     }
 
     suspend fun setAvatar(self: Self, id: String, avatar: ByteArray?): GroupResult {
         if (!validAvatar(avatar)) return GroupResult.Invalid
-        return adminOp(self, id) { g, members, removed ->
-            Change(g.copy(avatar = avatar), members, removed, note = "You changed the group picture")
+        return changeInfo(self, id, "You changed the group picture") { it.copy(avatar = avatar) }
+    }
+
+    /**
+     * Any member may rename the group or change its picture. The change goes
+     * to every member as a [Payload.GroupInfo]; the newest one wins
+     * everywhere, and admins' group updates carry it on to new members.
+     */
+    private suspend fun changeInfo(
+        self: Self,
+        id: String,
+        note: String,
+        edit: (GroupEntity) -> GroupEntity,
+    ): GroupResult = crypto.transaction {
+        val g = dao.group(id) ?: return@transaction GroupResult.Invalid
+        val members = dao.members(id)
+        if (g.status != GroupStatus.Active.name || members.none { it.userId == self.id && !it.invited }) {
+            return@transaction GroupResult.NotAllowed
         }
+        val next = edit(g).copy(infoTs = maxOf(clock(), g.infoTs + 1))
+        dao.putGroup(next)
+        system(id, note)
+        val info = Payload.GroupInfo(
+            id,
+            next.name,
+            next.avatar?.let { Base64.getEncoder().encodeToString(it) },
+            next.infoTs,
+        )
+        members.filter { it.userId != self.id }.forEach { enqueuePairwise(self.id, it.userId, info) }
+        GroupResult.Ok(dev.whispr.domain.model.GroupId(id))
+    }
+
+    /** A member renamed the group or changed its picture. */
+    fun applyInfo(me: String, sender: String, p: Payload.GroupInfo) {
+        val g = dao.group(p.g) ?: return
+        if (g.status != GroupStatus.Active.name && g.status != GroupStatus.Invited.name) return
+        if (sender == me || dao.members(p.g).none { it.userId == sender && !it.invited }) return
+        val name = p.name.trim()
+        val avatar = p.avatar?.let { runCatching { decode(it) }.getOrNull() ?: return }
+        if (!validName(name) || !validAvatar(avatar) || p.ts <= g.infoTs) return
+        dao.putGroup(g.copy(name = name, avatar = avatar, infoTs = p.ts))
+        if (name != g.name) system(p.g, "${nameOf(sender)} renamed the group to \"$name\"")
+        if (!avatar.contentEqualsNullable(g.avatar)) system(p.g, "${nameOf(sender)} changed the group picture")
     }
 
     suspend fun addMembers(self: Self, id: String, userIds: List<String>, invite: Boolean): GroupResult =
@@ -295,6 +333,7 @@ class GroupManager(
                 invitedBy = sender.takeIf { mine.invited },
                 removed = encodeRemoved(incomingRemoved),
                 createdAt = clock(),
+                infoTs = s.infoTs,
             )
             dao.putGroup(group)
             val members = effective.map { it.toEntity(s.id) }
@@ -322,9 +361,12 @@ class GroupManager(
         }
         val effective = filterState(s.members, merged)
         pinMembers(me, effective)
+        // Name and picture follow their own clock (any member may change them).
+        val info = s.infoTs >= local.infoTs
         val next = local.copy(
-            name = s.name.trim(),
-            avatar = s.avatar?.let(::decode),
+            name = if (info) s.name.trim() else local.name,
+            avatar = if (info) s.avatar?.let(::decode) else local.avatar,
+            infoTs = maxOf(local.infoTs, s.infoTs),
             revision = s.rev,
             revisionAuthor = sender,
             removed = encodeRemoved(merged),
@@ -504,6 +546,7 @@ class GroupManager(
                 )
             },
             removed = removedOf(g),
+            infoTs = g.infoTs,
         )
         to.distinct().filter { it != me }.forEach { enqueuePairwise(me, it, Payload.GroupUpdate(state)) }
     }

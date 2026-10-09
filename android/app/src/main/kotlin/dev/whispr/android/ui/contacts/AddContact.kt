@@ -24,6 +24,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
@@ -52,6 +53,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.getAndUpdate
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -89,6 +91,25 @@ class AddContactViewModel @Inject constructor(
 ) : ViewModel() {
     private val form = MutableStateFlow(AddContactUiState())
 
+    init {
+        // Opened from a shared link: send the request right away.
+        ContactLinks.pending.getAndUpdate { null }?.let(::addFromCode)
+    }
+
+    /** A pasted link or code. */
+    fun addFromCode(text: String?) {
+        val code = ContactLinks.codeFrom(text)
+        if (code == null) {
+            form.update { it.copy(error = AddContactError.InvalidCode) }
+            return
+        }
+        form.update { it.copy(submitting = true, error = null) }
+        viewModelScope.launch {
+            val (added, error) = contacts.addFromCode(code).toUi()
+            form.update { it.copy(submitting = false, added = added, error = error) }
+        }
+    }
+
     val state: StateFlow<AddContactUiState> = combine(form, connectivity.isOnline) { f, online ->
         f.copy(offline = !online)
     }
@@ -121,7 +142,10 @@ fun AddContactRoute(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     LaunchedEffect(state.added) { state.added?.let(onAdded) }
-    AddContactScreen(state, onBack, viewModel::onUsername, viewModel::submit, onScan, onMyCode)
+    val clipboard = LocalContext.current.getSystemService(android.content.ClipboardManager::class.java)
+    AddContactScreen(state, onBack, viewModel::onUsername, viewModel::submit, onScan, onMyCode) {
+        viewModel.addFromCode(clipboard?.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.text?.toString())
+    }
 }
 
 @Composable
@@ -132,6 +156,7 @@ fun AddContactScreen(
     onSubmit: () -> Unit,
     onScan: () -> Unit,
     onMyCode: () -> Unit,
+    onPaste: () -> Unit = {},
 ) {
     val spacing = WhisprTheme.spacing
     Scaffold(
@@ -156,6 +181,11 @@ fun AddContactScreen(
                         Icon(WhisprIcons.QrCode, contentDescription = null)
                         Text(stringResource(R.string.new_chat_my_code), modifier = Modifier.padding(start = spacing.sm))
                     }
+                    OutlinedButton(
+                        onClick = onPaste,
+                        enabled = !state.submitting,
+                        modifier = Modifier.align(Alignment.CenterHorizontally),
+                    ) { Text(stringResource(R.string.new_chat_paste_code)) }
                     Text(
                         stringResource(R.string.new_chat_or),
                         style = MaterialTheme.typography.titleSmall,

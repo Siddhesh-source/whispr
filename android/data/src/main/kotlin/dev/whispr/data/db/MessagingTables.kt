@@ -27,6 +27,10 @@ data class ContactEntity(
     val pendingKey: ByteArray? = null,
     /** A group member we have no 1:1 chat with: pinned for sessions, not listed as a contact. */
     @ColumnInfo(defaultValue = "0") val hidden: Boolean = false,
+    /** We sent them a contact request and they have not accepted yet: nothing else flows. */
+    @ColumnInfo(defaultValue = "0") val awaitingAccept: Boolean = false,
+    /** Their profile photo (JPEG, at most [dev.whispr.data.messaging.Payload.Profile.MAX_AVATAR_BYTES]). */
+    val avatar: ByteArray? = null,
 )
 
 /**
@@ -159,6 +163,8 @@ data class ConversationRow(
     val identityKey: ByteArray,
     val trust: String,
     val isRequest: Boolean,
+    val awaitingAccept: Boolean = false,
+    val avatar: ByteArray? = null,
     val messageId: String?,
     val outgoing: Boolean?,
     val body: String?,
@@ -223,7 +229,7 @@ interface MessageDao {
      */
     @Query(
         """
-        SELECT c.userId AS peerId, c.displayName, c.identityKey, c.trust, c.isRequest,
+        SELECT c.userId AS peerId, c.displayName, c.identityKey, c.trust, c.isRequest, c.awaitingAccept, c.avatar,
                m.messageId, m.outgoing, m.body, m.timestamp, m.status, m.placeholder,
                (SELECT kind FROM attachments a WHERE a.messageRow = m.localOrder) AS attachmentKind,
                (SELECT contentType FROM attachments a WHERE a.messageRow = m.localOrder) AS attachmentType,

@@ -93,6 +93,46 @@ sealed interface Payload {
     @SerialName("contact_request")
     data class ContactRequest(val name: String, val key: String, val replaces: String? = null) : Payload
 
+    /**
+     * "Yes, connect": the answer to a [ContactRequest]. Accounts are private,
+     * so a requester can't message, call or see the status of someone who
+     * hasn't sent this. Ignored from anyone we didn't ask.
+     */
+    @Serializable
+    @SerialName("contact_accept")
+    data class ContactAccept(val name: String, val replaces: String? = null) : Payload
+
+    /** Our name and profile photo (base64 JPEG), sent only to accepted contacts. The newest [ts] wins. */
+    @Serializable
+    @SerialName("profile")
+    data class Profile(val name: String, val avatar: String? = null, val ts: Long, val replaces: String? = null) :
+        Payload {
+        companion object {
+            const val MAX_AVATAR_BYTES = 32 * 1024
+        }
+    }
+
+    /** Any member renames group [g] or changes its picture (to every member). The newest [ts] wins. */
+    @Serializable
+    @SerialName("group_info")
+    data class GroupInfo(
+        val g: String,
+        val name: String,
+        val avatar: String? = null,
+        val ts: Long,
+        val replaces: String? = null,
+    ) : Payload
+
+    /** We viewed the recipient's status [sid]. Sent only while read receipts are on. */
+    @Serializable
+    @SerialName("status_seen")
+    data class StatusSeen(val sid: String) : Payload
+
+    /** We liked (or unliked) the recipient's status [sid]. */
+    @Serializable
+    @SerialName("status_like")
+    data class StatusLike(val sid: String, val liked: Boolean, val ts: Long) : Payload
+
     /** "I could not decrypt these envelopes from you; please resend them." */
     @Serializable
     @SerialName("reset")
@@ -217,6 +257,8 @@ data class GroupState(
     val members: List<MemberState>,
     /** Removal tombstones: userId -> the revision that removed them. */
     val removed: Map<String, Int> = emptyMap(),
+    /** When the name or picture last changed; see [Payload.GroupInfo]. */
+    val infoTs: Long = 0,
 ) {
     companion object {
         const val MAX_AVATAR_BYTES = 24 * 1024

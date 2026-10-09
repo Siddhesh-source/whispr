@@ -207,7 +207,7 @@ class SessionCryptoTest {
     }
 
     @Test
-    fun strangersFirstMessageCreatesARequestWithTheirKeyPinned() = runBlocking {
+    fun strangersFirstMessagePinsTheirKeyWithoutListingThem() = runBlocking {
         val stranger = CryptoDevice(server).also {
             it.publishKeys()
             it.pin(bob)
@@ -215,7 +215,9 @@ class SessionCryptoTest {
         assertEquals("hi", (bob.open(stranger, stranger.seal(bob, "hi")) as DecryptResult.Ok).value)
         val contact = bob.db.contactDao().get(stranger.userId)
         assertNotNull(contact)
-        assertTrue(contact!!.isRequest)
+        // Accounts are private: only their contact request makes them a visible request.
+        assertTrue(contact!!.hidden)
+        assertFalse(contact.isRequest)
         assertArrayEquals(stranger.identity.publicKey.serialize(), contact.identityKey)
         stranger.close()
     }

@@ -304,6 +304,7 @@ class MessagingEngine(
                 // Statuses end after 24 hours, with their encrypted photo.
                 val statuses = db.statusDao().expired(now).mapNotNull { it.blobPath }
                 db.statusDao().deleteExpired(now)
+                db.statusDao().pruneViews()
                 messages + statuses
             }
         } catch (c: CancellationException) {

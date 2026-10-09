@@ -45,6 +45,9 @@ data class Group(
     val me: GroupMember? get() = members.firstOrNull { it.isMe }
     val isAdmin: Boolean get() = status == GroupStatus.Active && me?.role == GroupRole.Admin
 
+    /** Any member can rename the group or change its picture. */
+    val canEditInfo: Boolean get() = status == GroupStatus.Active && me?.invited == false
+
     override fun equals(other: Any?) = other is Group &&
         id == other.id &&
         name == other.name &&

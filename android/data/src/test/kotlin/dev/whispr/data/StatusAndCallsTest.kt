@@ -89,7 +89,8 @@ class StatusAndCallsTest {
     }
 
     @Test
-    fun viewingMovesAnAuthorToViewedAndSendsNothing() = runBlocking {
+    fun viewingMovesAnAuthorToViewedAndSendsNothingWithReceiptsOff() = runBlocking {
+        dev.whispr.data.messaging.RoomSettingsRepository(bob.db.settingDao()).setReadReceipts(false)
         alice.statuses.postText("one", 0)
         eventually("bob has it") { bob.statuses.observeFeed().first().recent.isNotEmpty() }
         val item = bob.statuses.observeFeed().first().recent.single().items.single()

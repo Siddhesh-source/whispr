@@ -45,6 +45,7 @@ import androidx.core.net.toUri
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.whispr.android.R
+import dev.whispr.android.backup.RestoreFromBackup
 import dev.whispr.core.designsystem.component.OfflineBanner
 import dev.whispr.core.designsystem.component.WhisprAvatar
 import dev.whispr.core.designsystem.component.WhisprFields
@@ -68,6 +69,7 @@ fun OnboardingRoute(onCompleted: () -> Unit, viewModel: OnboardingViewModel = hi
         onNameChange = viewModel::onNameChange,
         onPickAvatar = { picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
         onSubmit = viewModel::submit,
+        restore = { RestoreFromBackup() },
     )
 }
 
@@ -78,6 +80,8 @@ fun OnboardingScreen(
     onPickAvatar: () -> Unit,
     onSubmit: () -> Unit,
     avatarPreview: ImageBitmap? = rememberUriBitmap(state.avatarUri),
+    /** "Restore from a backup", for someone reinstalling. */
+    restore: @Composable () -> Unit = {},
 ) {
     val spacing = WhisprTheme.spacing
     Scaffold(containerColor = MaterialTheme.colorScheme.surface) { padding ->
@@ -127,6 +131,7 @@ fun OnboardingScreen(
                         loading = state.submitting,
                         modifier = Modifier.padding(top = spacing.sm),
                     )
+                    restore()
                 }
             }
         }

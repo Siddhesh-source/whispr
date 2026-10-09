@@ -13,6 +13,10 @@ import java.nio.file.StandardCopyOption
 class SecretFileStore(private val dir: File, private val wrapper: KeyWrapper) {
     fun exists(name: String): Boolean = File(dir, name).isFile
 
+    fun delete(name: String) {
+        File(dir, name).delete()
+    }
+
     /** Returns null if the secret has never been written. */
     fun read(name: String, aad: ByteArray): ByteArray? {
         val file = File(dir, name)

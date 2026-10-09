@@ -4,6 +4,7 @@ import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import dev.whispr.data.auth.TokenSource
 import dev.whispr.data.calls.RoomCallSignalingRepository
+import dev.whispr.data.contacts.RoomContactsRepository
 import dev.whispr.data.db.AccountEntity
 import dev.whispr.data.db.ContactEntity
 import dev.whispr.data.db.WhisprDatabase
@@ -117,6 +118,14 @@ class RelayDevice(val name: String, private val relay: FakeRelay, url: String) {
     val groups = RoomGroupsRepository(db, engine, accounts, identityRepo, preparer)
     val statuses = RoomStatusRepository(db, engine, accounts, media, scope)
     val calls = RoomCallSignalingRepository(db, engine, WhisprApi(client, ServerConfig(url), tokens), accounts)
+    val contacts = RoomContactsRepository(
+        db,
+        WhisprApi(client, ServerConfig(url), tokens),
+        accounts,
+        identityRepo,
+        allowInsecureLoopback = true,
+        transaction = { block -> engine.transaction(block) },
+    )
 
     init {
         relay.register(id, name, identity.publicKey.serialize())

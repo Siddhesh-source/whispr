@@ -1,6 +1,9 @@
 package dev.whispr.android.navigation
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -10,10 +13,12 @@ import dev.whispr.android.ui.calls.CallsRoute
 import dev.whispr.android.ui.chat.ChatRoute
 import dev.whispr.android.ui.chats.ChatsRoute
 import dev.whispr.android.ui.contacts.AddContactRoute
+import dev.whispr.android.ui.contacts.ContactLinks
 import dev.whispr.android.ui.groups.GroupInfoRoute
 import dev.whispr.android.ui.groups.NewGroupRoute
 import dev.whispr.android.ui.home.HomeRoute
 import dev.whispr.android.ui.onboarding.OnboardingRoute
+import dev.whispr.android.ui.profile.ContactProfileRoute
 import dev.whispr.android.ui.profile.EditProfileRoute
 import dev.whispr.android.ui.profile.MyCodeRoute
 import dev.whispr.android.ui.scan.ScanContactRoute
@@ -39,6 +44,8 @@ import kotlinx.serialization.Serializable
 @Serializable data class ChatDestination(val peerId: String)
 
 @Serializable data class VerifyDestination(val peerId: String)
+
+@Serializable data class ContactProfileDestination(val peerId: String)
 
 @Serializable data class GroupChatDestination(val groupId: String)
 
@@ -87,6 +94,11 @@ fun WhisprNavHost(
             )
         }
         composable<ChatsDestination> {
+            // A shared contact link opened the app: go to Add contact, which sends the request.
+            val link by ContactLinks.pending.collectAsStateWithLifecycle()
+            LaunchedEffect(link) {
+                if (link != null) nav.navigate(AddContactDestination) { launchSingleTop = true }
+            }
             HomeRoute(
                 chats = {
                     ChatsRoute(
@@ -158,7 +170,12 @@ fun WhisprNavHost(
                 onBack = { nav.popBackStack() },
                 onVerify = { nav.navigate(VerifyDestination(peer)) },
                 onCall = { video -> onCall(UserId(peer), video) },
+                onProfile = { nav.navigate(ContactProfileDestination(peer)) { launchSingleTop = true } },
             )
+        }
+        composable<ContactProfileDestination> { entry ->
+            val peer = entry.toRoute<ContactProfileDestination>().peerId
+            ContactProfileRoute(onBack = { nav.popBackStack() }, onVerify = { nav.navigate(VerifyDestination(peer)) })
         }
         composable<VerifyDestination> { VerifyRoute(onBack = { nav.popBackStack() }) }
         composable<GroupChatDestination> { entry ->

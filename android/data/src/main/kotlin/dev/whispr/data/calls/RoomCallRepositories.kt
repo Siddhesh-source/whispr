@@ -3,6 +3,7 @@ package dev.whispr.data.calls
 import dev.whispr.data.db.CallEntity
 import dev.whispr.data.db.OutboxEntity
 import dev.whispr.data.db.WhisprDatabase
+import dev.whispr.data.messaging.ContactLink
 import dev.whispr.data.messaging.IceCandidatePayload
 import dev.whispr.data.messaging.MessagingEngine
 import dev.whispr.data.messaging.Payload
@@ -15,7 +16,6 @@ import dev.whispr.domain.model.CallSignal
 import dev.whispr.domain.model.ConversationId
 import dev.whispr.domain.model.IceServer
 import dev.whispr.domain.model.IncomingCallSignal
-import dev.whispr.domain.model.TrustState
 import dev.whispr.domain.model.UserId
 import dev.whispr.domain.repository.AccountRepository
 import dev.whispr.domain.repository.CallLogRepository
@@ -45,7 +45,7 @@ class RoomCallSignalingRepository(
     override suspend fun send(peer: UserId, signal: CallSignal): Boolean {
         val me = accounts.getAccount()?.userId ?: return false
         val contact = db.contactDao().get(peer.value) ?: return false
-        if (contact.isRequest || contact.hidden || contact.trust == TrustState.KeyChanged.name) return false
+        if (!ContactLink.trusted(contact)) return false
         val now = clock()
         db.outboxDao().enqueue(
             OutboxEntity(

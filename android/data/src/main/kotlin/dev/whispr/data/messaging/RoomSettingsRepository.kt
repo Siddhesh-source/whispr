@@ -7,16 +7,17 @@ import dev.whispr.domain.repository.SettingsRepository
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
-/** Privacy toggles, stored in the encrypted database. Receipts and typing default to off, screen security to on. */
+/** Privacy toggles, stored in the encrypted database. Typing defaults to off; receipts and screen security to on. */
 class RoomSettingsRepository(private val dao: SettingDao) : SettingsRepository {
     override fun observePrivacy(): Flow<PrivacySettings> = dao.observeAll().map { rows ->
         val map = rows.associate { it.key to it.value }
         PrivacySettings(
-            readReceipts = map[READ_RECEIPTS] == "true",
+            readReceipts = map[READ_RECEIPTS] != "false",
             typingIndicators = map[TYPING] == "true",
             screenSecurity = map[SCREEN_SECURITY] != "false",
             relayCalls = map[RELAY_CALLS] == "true",
             updateChecks = map[UPDATE_CHECKS] != "false",
+            saveFolder = map[SAVE_FOLDER]?.ifBlank { null },
         )
     }
 
@@ -31,11 +32,14 @@ class RoomSettingsRepository(private val dao: SettingDao) : SettingsRepository {
 
     override suspend fun setUpdateChecks(enabled: Boolean) = dao.put(SettingEntity(UPDATE_CHECKS, enabled.toString()))
 
-    private companion object {
-        const val UPDATE_CHECKS = "app.update_checks"
-        const val RELAY_CALLS = "privacy.relay_calls"
-        const val READ_RECEIPTS = "privacy.read_receipts"
-        const val TYPING = "privacy.typing_indicators"
-        const val SCREEN_SECURITY = "privacy.screen_security"
+    override suspend fun setSaveFolder(uri: String?) = dao.put(SettingEntity(SAVE_FOLDER, uri.orEmpty()))
+
+    companion object {
+        private const val UPDATE_CHECKS = "app.update_checks"
+        private const val SAVE_FOLDER = "files.save_folder"
+        private const val RELAY_CALLS = "privacy.relay_calls"
+        internal const val READ_RECEIPTS = "privacy.read_receipts"
+        private const val TYPING = "privacy.typing_indicators"
+        private const val SCREEN_SECURITY = "privacy.screen_security"
     }
 }

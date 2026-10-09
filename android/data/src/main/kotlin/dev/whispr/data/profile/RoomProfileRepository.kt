@@ -19,14 +19,16 @@ import kotlinx.coroutines.withContext
 
 /**
  * Display name and username live on the server (contacts and lookups need
- * them) and are mirrored locally. The profile picture never leaves the
- * device until encrypted profiles exist.
+ * them) and are mirrored locally. The profile picture never reaches the
+ * server: a small copy goes end to end encrypted to accepted contacts
+ * ([onChanged] sends it).
  */
 class RoomProfileRepository(
     private val dao: AccountDao,
     private val api: WhisprApi,
     private val avatars: AvatarImporter,
     private val io: CoroutineDispatcher,
+    private val onChanged: suspend () -> Unit = {},
 ) : ProfileRepository {
 
     override fun observeProfile(): Flow<MyProfile?> = dao.observe().map { a ->
@@ -39,15 +41,26 @@ class RoomProfileRepository(
         return when (val r = api.putDisplayName(valid.name)) {
             is ApiResult.Success -> {
                 dao.setDisplayName(valid.name)
+                onChanged()
                 ProfileResult.Ok
             }
             else -> r.toResult()
         }
     }
 
-    override suspend fun setAvatar(avatar: AvatarSource?) {
-        val path = avatar?.let { withContext(io) { avatars.import(it) } }
+    override suspend fun setAvatar(avatar: AvatarSource?): ProfileResult {
+        val path = try {
+            avatar?.let { withContext(io) { avatars.import(it) } }
+        } catch (_: java.io.IOException) {
+            return ProfileResult.InvalidInput
+        } catch (_: IllegalStateException) {
+            return ProfileResult.InvalidInput
+        } catch (_: SecurityException) {
+            return ProfileResult.InvalidInput
+        }
         dao.setAvatarPath(path)
+        onChanged()
+        return ProfileResult.Ok
     }
 
     override suspend fun claimUsername(nickname: String): ProfileResult {

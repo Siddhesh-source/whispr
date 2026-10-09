@@ -43,7 +43,7 @@ import dev.whispr.core.designsystem.theme.WhisprTheme
 fun QrCodeImage(content: String, contentDescription: String, modifier: Modifier = Modifier) {
     val fg = WhisprTheme.colors.qrForeground.toArgb()
     val bg = WhisprTheme.colors.qrBackground.toArgb()
-    val bitmap = remember(content, fg, bg) { renderQr(content, fg, bg).asImageBitmap() }
+    val bitmap = remember(content, fg, bg) { qrBitmap(content, fg, bg).asImageBitmap() }
     Box(
         modifier
             .widthIn(max = WhisprTheme.sizes.contentMaxWidth / 2)
@@ -60,7 +60,8 @@ fun QrCodeImage(content: String, contentDescription: String, modifier: Modifier 
     }
 }
 
-private fun renderQr(content: String, fg: Int, bg: Int): Bitmap {
+/** One pixel per module, no quiet zone. */
+fun qrBitmap(content: String, fg: Int, bg: Int): Bitmap {
     // Quiet zone comes from the padded background above, so margin 0 here.
     val hints = mapOf(EncodeHintType.ERROR_CORRECTION to ErrorCorrectionLevel.M, EncodeHintType.MARGIN to 0)
     val matrix = QRCodeWriter().encode(content, BarcodeFormat.QR_CODE, 0, 0, hints)

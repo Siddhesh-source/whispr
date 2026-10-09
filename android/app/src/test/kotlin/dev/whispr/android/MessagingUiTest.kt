@@ -95,6 +95,7 @@ class MessagingUiTest {
         messaging,
         FakeGroups(),
         active,
+        FakeSettings(),
     )
 
     @Test

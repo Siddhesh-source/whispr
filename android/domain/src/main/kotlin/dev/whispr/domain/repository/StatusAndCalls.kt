@@ -7,6 +7,7 @@ import dev.whispr.domain.model.IceServer
 import dev.whispr.domain.model.IncomingCallSignal
 import dev.whispr.domain.model.SendResult
 import dev.whispr.domain.model.StatusFeed
+import dev.whispr.domain.model.StatusViewer
 import dev.whispr.domain.model.UserId
 import java.time.Instant
 import kotlinx.coroutines.flow.Flow
@@ -14,7 +15,8 @@ import kotlinx.coroutines.flow.Flow
 /**
  * Status updates: 24-hour posts to every accepted contact. A photo is
  * encrypted and uploaded once; each contact gets its key in a pairwise
- * end-to-end encrypted message. Viewing sends nothing back.
+ * end-to-end encrypted message. Viewing tells the author only while read
+ * receipts are on; a like always does.
  */
 interface StatusRepository {
     fun observeFeed(): Flow<StatusFeed>
@@ -32,6 +34,12 @@ interface StatusRepository {
     suspend fun delete(statusId: String)
 
     suspend fun markViewed(author: UserId, statusId: String)
+
+    /** Likes (or unlikes) someone else's status; the author sees it. */
+    suspend fun like(author: UserId, statusId: String, liked: Boolean)
+
+    /** Who viewed our status [statusId], newest first. */
+    fun observeViewers(statusId: String): Flow<List<StatusViewer>>
 
     /** The decrypted photo of a status, downloading it first if needed; null if unavailable. */
     suspend fun imageBytes(author: UserId, statusId: String): ByteArray?

@@ -2,6 +2,8 @@ package dev.whispr.android.ui.settings
 
 import android.content.ClipData
 import android.content.Intent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -52,7 +54,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.whispr.android.R
+import dev.whispr.android.backup.BackupRun
+import dev.whispr.android.backup.BackupViewModel
+import dev.whispr.android.files.PublicFiles
 import dev.whispr.android.ui.FilterObscuredTouches
+import dev.whispr.android.ui.formatTimestamp
 import dev.whispr.android.ui.rememberAvatarBitmap
 import dev.whispr.android.update.UpdateState
 import dev.whispr.android.update.UpdateViewModel
@@ -65,6 +71,7 @@ import dev.whispr.core.designsystem.component.WhisprTopBar
 import dev.whispr.core.designsystem.icon.WhisprIcons
 import dev.whispr.core.designsystem.theme.WhisprFonts
 import dev.whispr.core.designsystem.theme.WhisprTheme
+import java.time.Instant
 import kotlinx.coroutines.launch
 
 @Composable
@@ -89,6 +96,7 @@ fun SettingsRoute(
         onScreenSecurity = viewModel::setScreenSecurity,
         onRelayCalls = viewModel::setRelayCalls,
         updates = { st -> UpdateRows(auto = st.updateChecks, onUpdateChecks = viewModel::setUpdateChecks) },
+        backup = { BackupSection() },
         deletion = deletion,
         onDeleteAccount = viewModel::deleteAccount,
         onDismissDeletion = viewModel::dismissDeletionError,
@@ -114,6 +122,8 @@ fun SettingsScreen(
     onRelayCalls: (Boolean) -> Unit = {},
     /** Release builds: the update check rows in About. */
     updates: @Composable (SettingsUiState.Content) -> Unit = {},
+    /** Where files are saved, and chat backups. */
+    backup: @Composable () -> Unit = {},
     deletion: Deletion = Deletion.Idle,
     onDeleteAccount: () -> Unit = {},
     onDismissDeletion: () -> Unit = {},
@@ -144,6 +154,7 @@ fun SettingsScreen(
                     onScreenSecurity,
                     onRelayCalls,
                     updates,
+                    backup,
                     onDelete = { confirming = true },
                 )
             }
@@ -224,6 +235,7 @@ private fun SettingsContent(
     onScreenSecurity: (Boolean) -> Unit,
     onRelayCalls: (Boolean) -> Unit,
     updates: @Composable (SettingsUiState.Content) -> Unit,
+    backup: @Composable () -> Unit,
     onDelete: () -> Unit,
 ) {
     val clipboard = LocalClipboard.current
@@ -323,6 +335,8 @@ private fun SettingsContent(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = spacing.xl, vertical = spacing.sm),
                 )
+
+                backup()
 
                 SectionLabel(stringResource(R.string.settings_section_about))
                 SettingsGroup {
@@ -453,6 +467,89 @@ private fun connectionText(status: ConnectionStatus) = stringResource(
         ConnectionStatus.Unavailable -> R.string.settings_connection_unavailable
     },
 )
+
+/** Where saved files and backups go, and encrypted chat backups (so chats survive reinstalling). */
+@Composable
+private fun BackupSection(viewModel: BackupViewModel = hiltViewModel()) {
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    val folderPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        if (uri != null) viewModel.setFolder(context, uri)
+    }
+    val downloads = stringResource(R.string.settings_save_folder_default)
+    SectionLabel(stringResource(R.string.settings_section_backup))
+    SettingsGroup {
+        NavRow(
+            stringResource(
+                R.string.settings_save_folder,
+                state.saveFolder?.let(PublicFiles::folderLabel) ?: downloads,
+            ),
+            WhisprIcons.Download,
+            { folderPicker.launch(null) },
+        )
+        if (state.saveFolder != null) {
+            GroupDivider()
+            NavRow(stringResource(R.string.settings_save_folder_reset), WhisprIcons.Refresh, {
+                viewModel.setFolder(context, null)
+            })
+        }
+        GroupDivider()
+        ToggleRow(
+            stringResource(R.string.settings_backup),
+            stringResource(R.string.settings_backup_body),
+            state.state.enabled,
+            viewModel::setEnabled,
+        )
+        if (state.state.enabled) {
+            GroupDivider()
+            NavRow(
+                when (val run = state.run) {
+                    BackupRun.Working -> stringResource(R.string.settings_backup_working)
+                    is BackupRun.Saved -> stringResource(R.string.settings_backup_saved, run.where)
+                    BackupRun.NeedsFolder -> stringResource(R.string.chat_save_needs_folder)
+                    BackupRun.Failed -> stringResource(R.string.settings_backup_failed)
+                    BackupRun.Idle -> state.state.lastBackupAt?.let {
+                        stringResource(R.string.settings_backup_last, formatTimestamp(Instant.ofEpochMilli(it)))
+                    } ?: stringResource(R.string.settings_backup_now)
+                },
+                WhisprIcons.Refresh,
+                viewModel::backUpNow,
+            )
+            GroupDivider()
+            NavRow(stringResource(R.string.settings_backup_show_key), WhisprIcons.Shield, viewModel::showKey)
+        }
+    }
+    state.showingKey?.let { key -> RecoveryKeyDialog(key, viewModel::hideKey) }
+}
+
+@Composable
+private fun RecoveryKeyDialog(key: String, onDone: () -> Unit) {
+    val context = LocalContext.current
+    AlertDialog(
+        onDismissRequest = onDone,
+        title = { Text(stringResource(R.string.settings_backup_key_title)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(WhisprTheme.spacing.md)) {
+                Text(stringResource(R.string.settings_backup_key_body), style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    key,
+                    style = MaterialTheme.typography.bodyLarge.copy(fontFamily = WhisprFonts.Mono),
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+            }
+        },
+        confirmButton = { TextButton(onClick = onDone) { Text(stringResource(R.string.settings_backup_key_done)) } },
+        dismissButton = {
+            TextButton(onClick = {
+                val clip = android.content.ClipData.newPlainText("", key)
+                clip.description.extras = android.os.PersistableBundle().apply {
+                    putBoolean("android.content.extra.IS_SENSITIVE", true)
+                }
+                context.getSystemService(android.content.ClipboardManager::class.java)?.setPrimaryClip(clip)
+            }) { Text(stringResource(R.string.chat_action_copy)) }
+        },
+    )
+}
 
 /** "Check for updates" and its automatic switch; only in builds that can update themselves. */
 @Composable

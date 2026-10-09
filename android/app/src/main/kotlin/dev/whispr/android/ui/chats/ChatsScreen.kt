@@ -33,6 +33,7 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.whispr.android.R
 import dev.whispr.android.ui.formatTimestamp
+import dev.whispr.android.ui.rememberImageBytes
 import dev.whispr.core.designsystem.component.ChatListRow
 import dev.whispr.core.designsystem.component.EmptyState
 import dev.whispr.core.designsystem.component.ErrorState
@@ -201,16 +202,20 @@ private fun ConversationRow(item: ConversationSummary, onOpen: (ConversationSumm
     val preview = when {
         item.peer?.trust == TrustState.KeyChanged -> stringResource(R.string.chats_key_changed_preview)
         item.group?.status == GroupStatus.Invited -> stringResource(R.string.chats_invite_preview)
-        item.group?.status == GroupStatus.Removed -> stringResource(R.string.chats_removed_preview)
+        item.group?.status == GroupStatus.Removed || item.group?.status == GroupStatus.Left ->
+            stringResource(R.string.chats_removed_preview)
         last == null && item.peer?.isRequest == true -> stringResource(R.string.chats_request_preview)
+        item.peer?.awaitingAccept == true -> stringResource(R.string.chats_request_sent_preview)
         last == null -> ""
         last.system -> body
         last.outgoing -> stringResource(R.string.chats_you_prefix, body)
         last.authorName != null -> stringResource(R.string.chats_author_prefix, last.authorName!!, body)
         else -> body
     }
+    val avatar by rememberImageBytes(item.group?.avatar ?: item.peer?.avatar)
     ChatListRow(
         name = item.title,
+        avatar = avatar,
         lastMessage = preview,
         time = last?.let { formatTimestamp(it.timestamp) }.orEmpty(),
         onClick = { onOpen(item) },

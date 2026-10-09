@@ -22,6 +22,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.whispr.android.calls.CallOverlay
 import dev.whispr.android.calls.CallRequests
 import dev.whispr.android.navigation.WhisprNavHost
+import dev.whispr.android.ui.contacts.ContactLinks
 import dev.whispr.core.designsystem.component.LoadingState
 import dev.whispr.core.designsystem.theme.WhisprTheme
 import dev.whispr.domain.repository.SettingsRepository
@@ -82,9 +83,10 @@ class MainActivity : ComponentActivity() {
         handle(intent)
     }
 
-    /** Requests from call notifications. */
+    /** Requests from call notifications, and shared contact links. */
     private fun handle(intent: Intent?) {
         when (intent?.action) {
+            Intent.ACTION_VIEW -> ContactLinks.codeFrom(intent.dataString)?.let { ContactLinks.pending.value = it }
             ACTION_SHOW_CALL -> callRequests.show.value = true
             ACTION_ACCEPT_CALL -> {
                 callRequests.show.value = true

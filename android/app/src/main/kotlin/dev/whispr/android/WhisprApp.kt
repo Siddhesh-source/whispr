@@ -6,12 +6,15 @@ import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
 import dagger.Lazy
 import dagger.hilt.android.HiltAndroidApp
+import dev.whispr.android.backup.BackupController
 import dev.whispr.android.calls.CallSystem
 import dev.whispr.android.di.ApplicationScope
 import dev.whispr.android.notifications.MessageNotifier
 import dev.whispr.android.push.PushManager
 import dev.whispr.android.session.SessionKeeper
 import dev.whispr.android.update.Updater
+import dev.whispr.data.backup.BackupPaths
+import dev.whispr.data.backup.ChatBackup
 import dev.whispr.data.media.MediaService
 import dev.whispr.data.messaging.MessagingEngine
 import dev.whispr.data.status.RoomStatusRepository
@@ -42,7 +45,11 @@ class WhisprApp : Application() {
     @Inject @ApplicationScope
     lateinit var scope: CoroutineScope
 
+    @Inject lateinit var backups: Lazy<BackupController>
+
     override fun onCreate() {
+        // A restored backup replaces the database before anything opens it.
+        ChatBackup.applyStaged(BackupPaths.of(this))
         super.onCreate()
         scope.launch {
             sessionKeeper.get().start()
@@ -56,6 +63,7 @@ class WhisprApp : Application() {
         // Listen for calls from the start, so an offer that arrives with a push wake-up rings.
         calls.get().start(scope)
         scope.launch { updater.get().checkIfDue() }
+        scope.launch { backups.get().backUpIfDue() }
 
         // Keep the WebSocket open while the app is visible; in the background
         // the engine disconnects once the outbox is empty and relies on push.

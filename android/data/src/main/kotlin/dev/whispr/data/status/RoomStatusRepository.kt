@@ -13,6 +13,7 @@ import dev.whispr.data.messaging.MessageDeletion
 import dev.whispr.data.messaging.MessagingEngine
 import dev.whispr.data.messaging.Payload
 import dev.whispr.data.messaging.PayloadCodec
+import dev.whispr.data.messaging.RoomSettingsRepository
 import dev.whispr.domain.model.Attachment
 import dev.whispr.domain.model.AttachmentKind
 import dev.whispr.domain.model.AttachmentState
@@ -25,6 +26,7 @@ import dev.whispr.domain.model.StatusItem
 import dev.whispr.domain.model.StatusKind
 import dev.whispr.domain.model.StatusRules
 import dev.whispr.domain.model.StatusSendState
+import dev.whispr.domain.model.StatusViewer
 import dev.whispr.domain.model.UserId
 import dev.whispr.domain.repository.AccountRepository
 import dev.whispr.domain.repository.StatusRepository
@@ -37,6 +39,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 /**
@@ -44,7 +47,8 @@ import kotlinx.coroutines.launch
  * stored here and queued, in the same transaction, to every accepted contact
  * at status priority, so it never delays a call or a chat message. A photo is
  * encrypted once and uploaded once; contacts get its key in the pairwise
- * payload. Viewing sends nothing.
+ * payload. Viewing sends a `status_seen` only while read receipts are on
+ * (like chat ticks); a like always goes to the author.
  */
 class RoomStatusRepository(
     private val db: WhisprDatabase,
@@ -71,7 +75,8 @@ class RoomStatusRepository(
             val others = items.filter { !it.mine }
                 .groupBy { it.author }
                 .map { (author, list) ->
-                    StatusAuthor(author, rows.first { it.authorId == author.value }.authorName.orEmpty(), list)
+                    val row = rows.first { it.authorId == author.value }
+                    StatusAuthor(author, row.authorName.orEmpty(), list, row.authorAvatar)
                 }
                 .sortedByDescending { it.latest }
             StatusFeed(
@@ -200,7 +205,34 @@ class RoomStatusRepository(
     }
 
     override suspend fun markViewed(author: UserId, statusId: String) {
-        engine.transaction { dao.markViewed(author.value, statusId) }
+        val me = accounts.getAccount()?.userId?.value ?: return
+        val now = clock()
+        engine.transaction {
+            val row = dao.get(author.value, statusId) ?: return@transaction
+            if (row.viewed || author.value == me) return@transaction
+            dao.markViewed(author.value, statusId)
+            val receipts = db.cryptoDao().setting(RoomSettingsRepository.READ_RECEIPTS) != "false"
+            if (receipts) sendTo(me, author.value, Payload.StatusSeen(statusId), now)
+        }
+    }
+
+    override suspend fun like(author: UserId, statusId: String, liked: Boolean) {
+        val me = accounts.getAccount()?.userId?.value ?: return
+        if (author.value == me) return
+        val now = clock()
+        engine.transaction {
+            val row = dao.get(author.value, statusId) ?: return@transaction
+            if (row.liked == liked) return@transaction
+            dao.setLiked(author.value, statusId, liked)
+            dao.markViewed(author.value, statusId)
+            sendTo(me, author.value, Payload.StatusLike(statusId, liked, now), now)
+        }
+    }
+
+    override fun observeViewers(statusId: String): Flow<List<StatusViewer>> = dao.observeViews(statusId).map { rows ->
+        rows.map {
+            StatusViewer(UserId(it.viewerId), it.viewerName.orEmpty(), Instant.ofEpochMilli(it.viewedAt), it.liked)
+        }
     }
 
     override suspend fun imageBytes(author: UserId, statusId: String): ByteArray? {
@@ -220,19 +252,23 @@ class RoomStatusRepository(
     /** Queues [payload] to every contact in the audience; runs inside a transaction. */
     private fun fanOut(me: String, payload: Payload, now: Long) {
         val bytes = PayloadCodec.encode(payload)
-        val cdao = db.cryptoDao()
-        dao.audience(me).forEach { peer ->
-            cdao.enqueue(
-                OutboxEntity(
-                    messageId = UUID.randomUUID().toString(),
-                    conversationId = ConversationId.direct(UserId(me), UserId(peer)).value,
-                    recipientId = peer,
-                    payload = bytes,
-                    clientTs = now,
-                    priority = OutboxEntity.PRIORITY_STATUS,
-                ),
-            )
-        }
+        dao.audience(me).forEach { peer -> enqueue(me, peer, bytes, now) }
+    }
+
+    private fun sendTo(me: String, peer: String, payload: Payload, now: Long) =
+        enqueue(me, peer, PayloadCodec.encode(payload), now)
+
+    private fun enqueue(me: String, peer: String, bytes: ByteArray, now: Long) {
+        db.cryptoDao().enqueue(
+            OutboxEntity(
+                messageId = UUID.randomUUID().toString(),
+                conversationId = ConversationId.direct(UserId(me), UserId(peer)).value,
+                recipientId = peer,
+                payload = bytes,
+                clientTs = now,
+                priority = OutboxEntity.PRIORITY_STATUS,
+            ),
+        )
     }
 
     private fun StatusEntity.asAttachment() = AttachmentEntity(
@@ -279,6 +315,9 @@ class RoomStatusRepository(
             expiresAt = Instant.ofEpochMilli(expireAt),
             viewed = viewed,
             sendState = StatusSendState.valueOf(sendState),
+            liked = liked,
+            views = views,
+            likes = likes,
         )
     }
 

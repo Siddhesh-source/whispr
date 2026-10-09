@@ -27,10 +27,23 @@ data class StatusItem(
     val expiresAt: Instant,
     val viewed: Boolean,
     val sendState: StatusSendState = StatusSendState.Sent,
+    /** Someone else's status: we liked it. */
+    val liked: Boolean = false,
+    /** Our own status: how many contacts viewed and liked it (views need their read receipts on). */
+    val views: Int = 0,
+    val likes: Int = 0,
 )
 
+/** Who viewed one of our statuses. */
+data class StatusViewer(val userId: UserId, val name: String, val viewedAt: Instant, val liked: Boolean)
+
 /** One contact's current statuses, oldest first (the order they are played). */
-data class StatusAuthor(val author: UserId, val name: String, val items: List<StatusItem>) {
+data class StatusAuthor(
+    val author: UserId,
+    val name: String,
+    val items: List<StatusItem>,
+    val avatar: ByteArray? = null,
+) {
     val allViewed: Boolean get() = items.all { it.viewed }
     val latest: Instant get() = items.maxOf { it.createdAt }
 }

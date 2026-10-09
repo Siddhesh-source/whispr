@@ -3,6 +3,7 @@ package dev.whispr.data.contacts
 import dev.whispr.data.db.ContactEntity
 import dev.whispr.data.db.OutboxEntity
 import dev.whispr.data.db.WhisprDatabase
+import dev.whispr.data.messaging.ContactLink
 import dev.whispr.data.messaging.Payload
 import dev.whispr.data.messaging.PayloadCodec
 import dev.whispr.data.messaging.toDomain
@@ -22,8 +23,10 @@ import dev.whispr.domain.repository.ContactsRepository
 import dev.whispr.domain.repository.IdentityRepository
 import java.util.Base64
 import java.util.UUID
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.withContext
 
 /**
  * Contacts with pinned identity keys.
@@ -43,6 +46,10 @@ class RoomContactsRepository(
     /** Debug builds talk to a loopback server over HTTP. */
     private val allowInsecureLoopback: Boolean,
     private val clock: () -> Long = System::currentTimeMillis,
+    /** Runs sync DAO work in one transaction (the engine's, so it serializes with incoming messages). */
+    private val transaction: suspend (() -> Unit) -> Unit = { block ->
+        withContext(Dispatchers.IO) { db.runInTransaction(block) }
+    },
     /** Resumes encrypted messaging with the contact (unpark, release held messages). */
     private val onKeyAcknowledged: suspend (UserId) -> Unit = {},
 ) : ContactsRepository {
@@ -109,18 +116,28 @@ class RoomContactsRepository(
         return pinAndRequest(profile.userId, profile.displayName, key)
     }
 
-    /** Pins [key] for a new contact (or confirms an existing pin) and sends them a contact request. */
+    /**
+     * Pins [key] for a new contact (or confirms an existing pin) and sends
+     * them a contact request. Accounts are private: until they accept, the
+     * contact shows "Request sent" and nothing else can be sent. If they had
+     * already asked us, adding them back accepts.
+     */
     private suspend fun pinAndRequest(userId: String, name: String, key: ByteArray): AddContactResult {
         val existing = dao.get(userId)
         if (existing != null && existing.identityKey.isNotEmpty() && !existing.identityKey.contentEquals(key)) {
             dao.flagKeyChange(userId, key)
             return AddContactResult.KeyMismatch
         }
-        // A group member we knew only from a group becomes a full contact.
+        if (existing?.isRequest == true && !existing.hidden) {
+            acceptRequest(UserId(userId))
+            return AddContactResult.Added(dao.get(userId)!!.toDomain())
+        }
+        val connected = existing != null && !existing.hidden && !existing.awaitingAccept
+        // A group member we knew only from a group becomes a contact once they accept.
         val entity = (existing ?: ContactEntity(userId, name, key, clock()))
-            .copy(identityKey = key, isRequest = false, hidden = false)
+            .copy(identityKey = key, isRequest = false, hidden = false, awaitingAccept = !connected)
         dao.upsert(entity)
-        if (existing == null || existing.isRequest || existing.hidden) sendContactRequest(UserId(userId))
+        if (!connected) sendContactRequest(UserId(userId))
         return AddContactResult.Added(entity.toDomain())
     }
 
@@ -143,7 +160,12 @@ class RoomContactsRepository(
         )
     }
 
-    override suspend fun acceptRequest(userId: UserId) = dao.accept(userId.value)
+    override suspend fun acceptRequest(userId: UserId) = transaction {
+        val cdao = db.cryptoDao()
+        val c = cdao.contact(userId.value)?.takeIf { it.isRequest } ?: return@transaction
+        cdao.putContact(c.copy(isRequest = false, awaitingAccept = false, hidden = false))
+        ContactLink.accept(cdao, userId.value, clock)
+    }
 
     override suspend fun declineRequest(userId: UserId) {
         db.messageDao().deleteFrom(userId.value)

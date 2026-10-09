@@ -123,8 +123,9 @@ class RoomMessagingRepository(
         sendDirectText(peer, text, replyTo, forwarded = false)
 
     private suspend fun sendDirectText(peer: UserId, text: String, replyTo: String?, forwarded: Boolean): Boolean {
-        // A changed key the user has not acknowledged blocks sending.
-        if (db.contactDao().get(peer.value)?.trust == TrustState.KeyChanged.name) return false
+        // Only to someone who accepted us (accounts are private), and never past an unacknowledged key change.
+        val contact = db.contactDao().get(peer.value)
+        if (!ContactLink.connected(contact) || contact!!.trust == TrustState.KeyChanged.name) return false
         val conversation = conversationWith(peer)
         val id = UUID.randomUUID().toString()
         val now = clock()
@@ -342,7 +343,7 @@ class RoomMessagingRepository(
         val peer =
             db.contactDao().everyone().firstOrNull { ConversationId.direct(me, UserId(it.userId)) == conversation }
                 ?: return null
-        if (peer.trust == TrustState.KeyChanged.name || peer.isRequest) return null
+        if (peer.trust == TrustState.KeyChanged.name || !ContactLink.connected(peer)) return null
         return MediaService.Target.Direct(peer.userId)
     }
 
@@ -357,7 +358,8 @@ class RoomMessagingRepository(
         if (group != null) {
             if (!engine.sendToGroup(group.groupId, null, payload)) return
         } else {
-            if (db.contactDao().get(message.peerId)?.trust == TrustState.KeyChanged.name) return
+            val peer = db.contactDao().get(message.peerId)
+            if (!ContactLink.connected(peer) || peer!!.trust == TrustState.KeyChanged.name) return
             db.outboxDao().enqueue(
                 OutboxEntity(
                     messageId = UUID.randomUUID().toString(),
@@ -513,7 +515,15 @@ class RoomMessagingRepository(
 
     private fun ConversationRow.toSummary(conversationId: ConversationId, showRead: Boolean) = ConversationSummary(
         id = conversationId,
-        peer = Contact(UserId(peerId), displayName, identityKey, TrustState.valueOf(trust), isRequest),
+        peer = Contact(
+            UserId(peerId),
+            displayName,
+            identityKey,
+            TrustState.valueOf(trust),
+            isRequest,
+            awaitingAccept,
+            avatar,
+        ),
         lastMessage = messageId?.let {
             Message(
                 id = it,
@@ -596,4 +606,4 @@ internal fun AttachmentEntity.toDomain() = Attachment(
 )
 
 internal fun ContactEntity.toDomain() =
-    Contact(UserId(userId), displayName, identityKey, TrustState.valueOf(trust), isRequest)
+    Contact(UserId(userId), displayName, identityKey, TrustState.valueOf(trust), isRequest, awaitingAccept, avatar)

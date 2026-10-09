@@ -185,6 +185,8 @@ class ContactTrustTest {
         // serves under the old key) would otherwise race the acknowledgement below
         // and, correctly, flag the key change again.
         eventually("contact request sent") { db.outboxDao().observeCount().first() == 0 }
+        // They accepted (their contact_accept is covered in PrivateContactsTest).
+        db.contactDao().upsert(db.contactDao().get(peer.value)!!.copy(awaitingAccept = false))
         contacts.setVerified(peer, true)
         assertEquals(TrustState.Verified, contacts.contact(peer)!!.trust)
 
@@ -264,10 +266,15 @@ class ContactTrustTest {
     }
 
     @Test
-    fun messageFromStrangerIsAMessageRequestAndDeclineRemovesIt() = runBlocking {
+    fun aStrangersMessageIsDroppedButTheirRequestShowsAndDeclineRemovesIt() = runBlocking {
         eventually("connected") { gateway.current != null }
         gateway.push(gateway.envelope(peer.value, """{"t":"text","body":"hello stranger"}"""))
+        eventually("processed") { gateway.acks.isNotEmpty() }
+        assertTrue(messaging.observeConversations().first().isEmpty())
+        val key = Base64.getEncoder().encodeToString(peerKey)
+        gateway.push(gateway.envelope(peer.value, """{"t":"contact_request","name":"Peer","key":"$key"}"""))
         eventually("request") { contacts.contact(peer)?.isRequest == true }
+        assertTrue(messaging.observeConversations().first().single().lastMessage == null)
         contacts.declineRequest(peer)
         assertNull(contacts.contact(peer))
         assertTrue(messaging.observeConversations().first().isEmpty())

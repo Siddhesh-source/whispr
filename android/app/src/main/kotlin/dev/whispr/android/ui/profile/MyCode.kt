@@ -15,6 +15,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
@@ -25,8 +26,10 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.whispr.android.R
+import dev.whispr.android.ui.contacts.ContactLinks
 import dev.whispr.core.designsystem.component.LoadingState
 import dev.whispr.core.designsystem.component.QrCodeImage
+import dev.whispr.core.designsystem.component.WhisprPrimaryButton
 import dev.whispr.core.designsystem.component.WhisprTopBar
 import dev.whispr.core.designsystem.theme.WhisprFonts
 import dev.whispr.core.designsystem.theme.WhisprTheme
@@ -60,11 +63,12 @@ class MyCodeViewModel @Inject constructor(contacts: ContactsRepository, profile:
 @Composable
 fun MyCodeRoute(onBack: () -> Unit, viewModel: MyCodeViewModel = hiltViewModel()) {
     val state by viewModel.state.collectAsStateWithLifecycle()
-    MyCodeScreen(state, onBack)
+    val context = LocalContext.current
+    MyCodeScreen(state, onBack, onShare = { code -> ContactLinks.share(context, code, state.name) })
 }
 
 @Composable
-fun MyCodeScreen(state: MyCodeUiState, onBack: () -> Unit) {
+fun MyCodeScreen(state: MyCodeUiState, onBack: () -> Unit, onShare: (String) -> Unit = {}) {
     val spacing = WhisprTheme.spacing
     Scaffold(
         containerColor = MaterialTheme.colorScheme.surface,
@@ -101,6 +105,13 @@ fun MyCodeScreen(state: MyCodeUiState, onBack: () -> Unit) {
                     Text(
                         stringResource(R.string.my_code_hint),
                         style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                    )
+                    WhisprPrimaryButton(text = stringResource(R.string.my_code_share), onClick = { onShare(code) })
+                    Text(
+                        stringResource(R.string.my_code_share_hint),
+                        style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         textAlign = TextAlign.Center,
                     )
