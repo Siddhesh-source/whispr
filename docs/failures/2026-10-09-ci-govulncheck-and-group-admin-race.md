@@ -53,3 +53,15 @@ Both emulators' `system_server` died while idle (`DeadObjectException`,
 `Can't find service: activity`), so account deletion couldn't finish.
 Restarted them cold; the app data survived and both test accounts were
 deleted through the app. Environment only; no code change.
+
+## android · StatusAndCallsTest (next push)
+
+```
+StatusAndCallsTest > statusEntriesNeverGoAheadOfCallsAndStaleOnesAreDropped FAILED
+    java.lang.AssertionError at StatusAndCallsTest.kt:189
+```
+
+Test bug: it inspected Alice's outbox while her running engine was sending
+and pruning that same outbox, so the head and the drop count could change
+under it (it passed locally by timing). Fix: the test uses a device whose
+engine never starts. 10/10 status and call tests pass.

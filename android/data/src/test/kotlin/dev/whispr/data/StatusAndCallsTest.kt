@@ -187,18 +187,26 @@ class StatusAndCallsTest {
 
     @Test
     fun statusEntriesNeverGoAheadOfCallsAndStaleOnesAreDropped() = runBlocking {
-        val now = System.currentTimeMillis()
-        val dao = alice.db.cryptoDao()
-        alice.engine.transaction {
-            repeat(3) {
-                dao.enqueue(entry(bob, OutboxEntity.PRIORITY_STATUS, now - 25 * HOUR))
-                dao.enqueue(entry(bob, OutboxEntity.PRIORITY_NORMAL, now))
+        // A phone whose engine never starts: nothing sends or prunes this outbox meanwhile.
+        val idle = RelayDevice("Idle", relay, server.url("/").toString())
+        try {
+            val now = System.currentTimeMillis()
+            val dao = idle.db.cryptoDao()
+            idle.engine.transaction {
+                repeat(3) {
+                    dao.enqueue(entry(bob, OutboxEntity.PRIORITY_STATUS, now - 25 * HOUR))
+                    dao.enqueue(entry(bob, OutboxEntity.PRIORITY_NORMAL, now))
+                }
+                dao.enqueue(entry(bob, OutboxEntity.PRIORITY_CALL, now))
             }
-            dao.enqueue(entry(bob, OutboxEntity.PRIORITY_CALL, now))
+            val (head, dropped) = idle.engine.transaction {
+                dao.outboxHead(now) to dao.dropStaleStatus(now - 24 * HOUR)
+            }
+            assertEquals(OutboxEntity.PRIORITY_CALL, head!!.priority)
+            assertEquals(3, dropped)
+        } finally {
+            idle.close()
         }
-        val (head, dropped) = alice.engine.transaction { dao.outboxHead(now) to dao.dropStaleStatus(now - 24 * HOUR) }
-        assertEquals(OutboxEntity.PRIORITY_CALL, head!!.priority)
-        assertEquals(3, dropped)
     }
 
     // ---- Calls ----
