@@ -140,19 +140,20 @@ class LiveMessagingTest {
         try {
             alice.register()
             bob.register()
-            check(alice.contacts.addById(bob.id.value) is AddContactResult.Added)
             val conversation = ConversationId.direct(alice.id, bob.id)
 
-            // Bob installs the app (publishing his keys), then goes offline. Alice sends a burst.
-            // (With end-to-end encryption nobody can write to an account that never published keys.)
+            // Both install the app (publishing keys) and connect; then Bob goes offline and
+            // Alice sends a burst.
+            alice.goOnline()
             bob.goOnline()
             eventually("bob published keys") { bob.keysPublished() }
+            connect(alice, bob)
             bob.restart()
-            alice.goOnline()
             val texts = (1..10).map { "offline-$it" }
-            texts.forEach { alice.repo.sendText(bob.id, it) }
+            texts.forEach { check(alice.repo.sendText(bob.id, it)) }
             eventually("all accepted by server") {
-                alice.repo.observeMessages(conversation).first().all { it.status == MessageStatus.Sent }
+                alice.repo.observeMessages(conversation).first().filter { !it.system }
+                    .all { it.status == MessageStatus.Sent }
             }
 
             // Bob comes online: everything arrives once, in order.
@@ -160,7 +161,8 @@ class LiveMessagingTest {
             eventually("bob received all") { bob.repo.observeMessages(conversation).first().size == texts.size }
             assertEquals(texts, bob.repo.observeMessages(conversation).first().map { it.text })
             eventually("alice sees delivered") {
-                alice.repo.observeMessages(conversation).first().all { it.status == MessageStatus.Delivered }
+                alice.repo.observeMessages(conversation).first().filter { !it.system }
+                    .all { it.status == MessageStatus.Delivered }
             }
 
             // Real time, both directions.
@@ -210,6 +212,7 @@ class LiveMessagingTest {
             eventually("alice got request") { alice.contacts.contact(bob.id)?.isRequest == true }
             alice.contacts.acceptRequest(bob.id)
             assertEquals(TrustState.Unverified, alice.contacts.contact(bob.id)!!.trust)
+            eventually("bob learns he was accepted") { bob.contacts.contact(alice.id)?.connected == true }
 
             // Both can chat without scanning again.
             val conversation = ConversationId.direct(alice.id, bob.id)
@@ -260,8 +263,9 @@ class LiveMessagingTest {
         try {
             listOf(alice, bob, carol).forEach { it.register() }
             listOf(alice, bob, carol).forEach { it.goOnline() }
-            check(alice.contacts.addById(bob.id.value) is AddContactResult.Added)
-            check(alice.contacts.addById(carol.id.value) is AddContactResult.Added)
+            listOf(bob, carol).forEach { eventually("${it.id} published keys") { it.keysPublished() } }
+            connect(alice, bob)
+            connect(alice, carol)
             val withCarol = ConversationId.direct(alice.id, carol.id)
             alice.repo.sendText(carol.id, "warm-up")
             eventually("carol has a session") { carol.repo.observeMessages(withCarol).first().isNotEmpty() }
@@ -277,6 +281,14 @@ class LiveMessagingTest {
         } finally {
             listOf(alice, bob, carol).forEach { it.close() }
         }
+    }
+
+    /** [a] asks to connect and [b] accepts (accounts are private); both must be online. */
+    private suspend fun connect(a: Device, b: Device) {
+        check(a.contacts.addById(b.id.value) is AddContactResult.Added)
+        eventually("${b.id} got the request") { b.contacts.contact(a.id)?.isRequest == true }
+        b.contacts.acceptRequest(a.id)
+        eventually("${a.id} was accepted") { a.contacts.contact(b.id)?.connected == true }
     }
 
     private fun eventually(what: String, cond: suspend () -> Boolean) = runBlocking {
