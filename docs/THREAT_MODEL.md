@@ -363,7 +363,7 @@ Design: `docs/designs/camera-gifs-status-calls.md`.
 | A late offer rings long after the caller gave up | Rings only if the server accepted it in the last 45 s (server clock, not the sender's); older offers become missed calls | Done, tested |
 | Status kept past 24 hours | Receivers clamp the start time to their own clock and delete at 24 h, with the photo blob; queued fan-out older than 24 h is dropped | Done, tested |
 | Someone deletes another person's status | `status_delete` only removes the sender's own status | Done, tested |
-| Viewing a status reveals you read it | No view receipts are sent | By design |
+| Viewing a status reveals you read it | Superseded in beta.3: a `status_seen` goes to the author only while your read receipts are on | See below |
 | GIF or WebP metadata (XMP, EXIF, comments) leaks location or software | Sent byte for byte but rebuilt block by block, keeping only what draws the frames; malformed files are refused | Done, tested |
 | Camera photo keeps EXIF | Re-encoded like any picked photo; the temp file is deleted after encryption | Done |
 | The relay used to reach internal services | coturn denies private, loopback, link-local and metadata peers | Done |
@@ -377,6 +377,35 @@ Design: `docs/designs/camera-gifs-status-calls.md`.
 - Without push configured, a phone rings only while Whispr is connected.
 - Group calls are not supported.
 - Status goes to all accepted contacts; there are no per-contact lists yet.
+
+## Private accounts, profiles, backups (beta.3)
+
+Design: `docs/designs/whatsapp-parity.md`.
+
+### What the server learns
+
+- **Requests:** a contact request and its acceptance are ordinary encrypted
+  envelopes, indistinguishable from messages. The server already saw who
+  writes to whom.
+- **Profile photos, status views and likes, group names:** encrypted
+  envelopes to people you're connected with. Nothing new in the clear.
+- **Backups:** nothing. They never go to the server; the file sits in the
+  phone's Downloads (or a folder you picked), where other apps with storage
+  access, a cloud sync app, or anyone with the file can copy it.
+
+### Threats and mitigations
+
+| Threat | Mitigation | Status |
+|---|---|---|
+| Strangers message, call or watch someone who never accepted them | Only `contact_request` and `contact_accept` pass before both sides accepted; text, media, reactions, timers, calls, statuses, profiles and status views from anyone else are dropped on the receiving phone, leaving no trace, and the sending side refuses too | Done, tested (`PrivateContactsTest`) |
+| A forged acceptance | `contact_accept` counts only from someone we sent a request to | Done |
+| Request spam | Each request is one row the user can decline; the sender learns nothing either way. No rate limit beyond the server's per-account send limits yet | Accepted for beta |
+| A shared code used to add you | A code only lets someone ask; you still accept. It carries no phone number | By design |
+| A stolen backup file | AES-256-GCM under a 256-bit random recovery key that only the user holds (shown in Settings, never sent anywhere); per-file key from HMAC-SHA256 over a random salt; chunk AAD and counter nonces reject truncated, reordered or altered files | Done, tested (`BackupCipherTest`) |
+| A stolen phone reveals the recovery key | Settings can show it again (behind the unlocked phone and screen security); wrapped by a Keystore key at rest | Accepted |
+| Restoring an old backup | It brings back older ratchet state; messages that then fail to decrypt go through the existing session reset. One-time prekeys used since the backup are gone, so the first message from some contacts may need a reset | Accepted |
+| A restored backup of a deleted account | Sign-in fails; the user starts over | By design |
+| Status views reveal who reads what | Views are sent only while read receipts are on (reciprocal, like message ticks); likes are explicit | By design |
 
 ## Review triggers
 

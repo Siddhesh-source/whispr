@@ -1,30 +1,67 @@
 # Whispr
 
-A privacy-first, end-to-end encrypted Android messenger. No ads, trackers,
-feeds, phone numbers, e-mail addresses or passwords. All protocol
-cryptography comes from [libsignal](https://github.com/signalapp/libsignal).
-Licensed AGPL-3.0, the same licence as libsignal.
+**A private messenger with everything you use WhatsApp for, and nothing
+that ties it to your phone number.**
 
-**Status: public beta (0.1.0-beta.1).** It has had an internal security
+Your phone number is in hundreds of address books: old classmates, landlords,
+delivery drivers, that one group you were added to in 2019. On WhatsApp, every
+one of them can find you, message you, add you to groups and watch your
+status. The app fills up with people you never chose, and it stops feeling
+private.
+
+Whispr starts from the other end. There is no phone number, no e-mail and no
+contact upload. Your account is a key pair made on your phone, and people
+reach you only through a code you choose to share. Even then they can only
+*ask*: nothing gets through until you accept.
+
+End-to-end encrypted with [libsignal](https://github.com/signalapp/libsignal),
+the same cryptography as Signal. Licensed AGPL-3.0.
+
+**Status: public beta (0.1.0-beta.3).** It has had an internal security
 review (`docs/SECURITY_REVIEW.md`) but no independent audit yet. Do not rely
 on it where a failure could hurt someone.
 
-## What it does
+## Private by default
 
-- **Private by design.** Your account is a key pair made on your phone. The
-  server relays and briefly stores ciphertext; it never sees message text,
-  photos, contact lists, group names or members.
-- **Signal protocol.** One-to-one chats use PQXDH and the Double Ratchet;
-  groups use sender keys, rotated when anyone leaves. Photos, files and
-  voice messages are encrypted on the phone with a fresh key each.
-- **Messaging.** Replies, reactions, forwarding, copy, delete for me or for
-  everyone, disappearing messages, and search over the messages on your
-  phone.
-- **Trust you can check.** Add people by QR code or username, compare safety
-  numbers, and get a warning (with sending paused) if someone's key changes.
-- **Protects the phone too.** Encrypted local database, screen security
-  against screenshots and recents thumbnails, private lock-screen
-  notifications, and a delete-account button that erases everything.
+- **No number to leak.** Share your QR code in person, or send it (or a
+  `whispr://add` link) to anyone over the internet. The code carries your
+  account ID and public key, never a phone number.
+- **Requests, not intrusions.** Scanning your code or finding your username
+  sends a request. Until you accept, they can't message you, call you, see
+  your status or your photo; anything else they send is dropped on your phone.
+- **The server sees ciphertext.** It relays and briefly stores encrypted
+  envelopes. It never sees message text, photos, your contacts, group names
+  or members, or who viewed your status.
+
+## Everything you'd expect from a messenger
+
+- **Chats and groups.** Replies, reactions, forwarding, voice messages,
+  photos (camera or gallery), GIFs, files, disappearing messages, search.
+  Any member can rename a group or change its picture; admins manage members.
+  Leave a group and its history stays, marked read-only.
+- **Status.** 24-hour text and photo updates for your contacts, with a view
+  count and likes. Views are shared only while read receipts are on, the
+  same rule as message ticks.
+- **Calls.** End-to-end encrypted voice and video calls (WebRTC), with an
+  option to route them through the relay to hide your IP address.
+- **Profiles.** Your photo goes encrypted to the people you accepted, and only
+  to them. Tap a contact to see their profile, safety number, and every photo
+  and file you exchanged, each one saveable.
+- **Your chats survive reinstalling.** Turn on chat backup: once a day an
+  encrypted copy goes to Downloads/Whispr (or a folder you pick). Only your
+  64-character recovery key opens it, and restoring brings back your account,
+  chats and media.
+- **Read receipts** on by default, typing indicators off, both switchable.
+- **Updates inside the app.** New releases are downloaded, checked against
+  their SHA-256 and installed from Settings; no trip to GitHub needed.
+
+## Trust you can check
+
+Compare safety numbers in person to verify a contact, and get a warning (with
+sending paused) if someone's key changes. The phone itself is protected too:
+an encrypted local database, screen security against screenshots and recents
+thumbnails, private lock-screen notifications, and a delete-account button that
+erases everything.
 
 What the server still learns, and what we have not solved yet, is written
 down in `docs/THREAT_MODEL.md`.

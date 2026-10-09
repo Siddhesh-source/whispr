@@ -31,3 +31,4 @@ was done, and whether it is fixed or open.
 | 2026-10-09 | [Fixes while building camera, GIFs, status and calls](2026-10-09-camera-gifs-status-calls-fixes.md) | fixed (2 open) |
 | 2026-10-09 | [Server deploy blocked: SSH rule points at an old IP](2026-10-09-deploy-blocked-ssh-rule.md) | open |
 | 2026-10-09 | [CI failed: Go vulnerabilities and a group admin race](2026-10-09-ci-govulncheck-and-group-admin-race.md) | fixed |
+| 2026-10-09 | [Private accounts, profiles and backups: fixes](2026-10-09-private-accounts-parity-fixes.md) | fixed |
