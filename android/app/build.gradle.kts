@@ -66,7 +66,7 @@ android {
         applicationId = "dev.whispr.android"
         minSdk = 26
         targetSdk = 37
-        versionName = "0.1.0-beta.2"
+        versionName = "0.1.0-beta.3"
         // Derived, so every release is an upgrade: MAJOR*1_000_000 + MINOR*10_000 +
         // PATCH*100 + beta number (99 for a final release). 0.1.0-beta.2 is 10002.
         versionCode = versionCodeOf(versionName!!)
