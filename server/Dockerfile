@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 
 # ---- libsignal FFI (official Signal code; the only crypto the server links) ----
-FROM rust:1.98.1-bookworm AS libsignal
+FROM rust:1.99.1-bookworm AS libsignal
 ARG LIBSIGNAL_VERSION=v0.104.0
 RUN apt-get update && apt-get install -y --no-install-recommends \
         clang libclang-dev cmake protobuf-compiler libprotobuf-dev git \
